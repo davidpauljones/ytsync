@@ -128,7 +128,7 @@
         partyId = urlParams.get('party');
         if (partyId) {
             isHost = false;
-            createInviteBtn.classList.add('hidden'); // Guests don't create parties
+            createInviteBtn.classList.add('hidden');
             joinParty();
         } else {
             isHost = true;
@@ -160,8 +160,10 @@
         });
     }
 
-    // --- WEBRTC & FIREBASE SIGNALING ---
-    createInviteBtn.addEventListener('click', async () => {
+    // --- WEBRTC & FIREBASE SIGNALING (REFACTORED) ---
+
+    // Host creates a party link and listens for guests
+    createInviteBtn.addEventListener('click', () => {
         isHost = true;
         partyId = crypto.randomUUID();
         const url = `${window.location.href.split('?')[0]}?party=${partyId}`;
@@ -170,105 +172,94 @@
         createInviteBtn.disabled = true;
 
         partyDocRef = db.collection('parties').doc(partyId);
-        
-        // The host needs a peer connection to generate the initial offer
-        const pc = await createPeerConnection('initial-host');
-        
-        // Now that the offer is set in Firestore, we can listen for guests
         listenForGuests();
     });
 
+    // Guest joins a party by creating an offer
     async function joinParty() {
         partyDocRef = db.collection('parties').doc(partyId);
-        const pc = createPeerConnection('host'); // Connection to the host
-        
-        const offerCandidatesRef = partyDocRef.collection('offerCandidates');
-        const answerCandidatesRef = partyDocRef.collection('answerCandidates');
-        
+        const guestDocRef = partyDocRef.collection('guests').doc(myId);
+
+        const pc = createPeerConnection('host');
+        dataChannels['host'] = pc.createDataChannel('sync-channel');
+        configureDataChannel('host', dataChannels['host']);
+
+        const guestCandidatesRef = guestDocRef.collection('guestCandidates');
         pc.onicecandidate = event => {
             if (event.candidate) {
-                answerCandidatesRef.add({ ...event.candidate.toJSON(), from: myId });
+                guestCandidatesRef.add(event.candidate.toJSON());
             }
         };
 
-        // Get host's offer
-        const offerDoc = await partyDocRef.get();
-        const { offer } = offerDoc.data();
-        await pc.setRemoteDescription(new RTCSessionDescription(offer));
-        
-        const answer = await pc.createAnswer();
-        await pc.setLocalDescription(answer);
-        
-        await partyDocRef.collection('answers').doc(myId).set({ answer, name: myName });
+        const offer = await pc.createOffer();
+        await pc.setLocalDescription(offer);
+        await guestDocRef.set({ offer, name: myName });
 
-        // Listen for host's ICE candidates
-        offerCandidatesRef.onSnapshot(snapshot => {
+        // Listen for the host's answer
+        guestDocRef.onSnapshot(async (snapshot) => {
+            const data = snapshot.data();
+            if (data && data.answer && !pc.currentRemoteDescription) {
+                await pc.setRemoteDescription(new RTCSessionDescription(data.answer));
+            }
+        });
+
+        // Listen for the host's ICE candidates
+        guestDocRef.collection('hostCandidates').onSnapshot(snapshot => {
             snapshot.docChanges().forEach(change => {
                 if (change.type === 'added') {
                     pc.addIceCandidate(new RTCIceCandidate(change.doc.data()));
                 }
             });
         });
-        
-        dataChannels['host'] = pc.createDataChannel('sync-channel');
-        configureDataChannel('host', dataChannels['host']);
     }
 
+    // Host listens for new guests and answers their offers
     function listenForGuests() {
-        partyDocRef.collection('answers').onSnapshot(async snapshot => {
+        partyDocRef.collection('guests').onSnapshot(async snapshot => {
             for (const change of snapshot.docChanges()) {
                 if (change.type === 'added') {
                     const guestId = change.doc.id;
-                    // Avoid re-connecting to an existing guest
-                    if(peerConnections[guestId]) continue;
+                    if(peerConnections[guestId]) continue; // Already connected
 
-                    const { answer, name } = change.doc.data();
-
-                    const pc = createPeerConnection(guestId, name);
-                    const offerCandidatesRef = partyDocRef.collection('offerCandidates');
-                    const answerCandidatesRef = partyDocRef.collection('answerCandidates').where('from', '==', guestId);
+                    const guestDocRef = change.doc.ref;
+                    const { offer, name } = change.doc.data();
                     
+                    const pc = createPeerConnection(guestId, name);
+                    pc.ondatachannel = event => {
+                        dataChannels[guestId] = event.channel;
+                        configureDataChannel(guestId, event.channel, name);
+                    };
+
+                    const hostCandidatesRef = guestDocRef.collection('hostCandidates');
                     pc.onicecandidate = event => {
                         if (event.candidate) {
-                            offerCandidatesRef.add(event.candidate.toJSON());
+                            hostCandidatesRef.add(event.candidate.toJSON());
                         }
                     };
 
-                    await pc.setRemoteDescription(new RTCSessionDescription(answer));
+                    await pc.setRemoteDescription(new RTCSessionDescription(offer));
+                    const answer = await pc.createAnswer();
+                    await pc.setLocalDescription(answer);
+                    await guestDocRef.update({ answer });
 
-                    answerCandidatesRef.onSnapshot(snap => {
+                    // Listen for the guest's ICE candidates
+                    guestDocRef.collection('guestCandidates').onSnapshot(snap => {
                         snap.docChanges().forEach(ch => {
                             if (ch.type === 'added') {
                                 pc.addIceCandidate(new RTCIceCandidate(ch.doc.data()));
                             }
                         });
                     });
-
-                    pc.ondatachannel = event => {
-                        dataChannels[guestId] = event.channel;
-                        configureDataChannel(guestId, event.channel, name);
-                    };
                 }
             }
         });
     }
-
-    async function createPeerConnection(peerId, peerName) {
+    
+    function createPeerConnection(peerId, peerName) {
         const pc = new RTCPeerConnection({ iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] });
         peerConnections[peerId] = pc;
         pc.peerName = peerName;
-
         pc.onconnectionstatechange = () => updateConnectionStatus();
-        
-        if (isHost && peerId === 'initial-host') {
-            const offer = await pc.createOffer();
-            await pc.setLocalDescription(offer);
-            await partyDocRef.set({ offer }); // Host sets the initial offer
-            // This initial PC is just for the offer, we can remove it.
-            // A new one will be created for each actual guest.
-            delete peerConnections['initial-host']; 
-        }
-
         return pc;
     }
 
@@ -277,9 +268,9 @@
         channel.onopen = () => {
             updateConnectionStatus();
             if (isHost) {
-                const users = { host: {name: myName} };
+                const users = { [myId]: {name: myName} };
                 Object.values(peerConnections).forEach(pc => {
-                     if(pc.peerName) users[pc.peerName] = { name: pc.peerName };
+                     if(pc.peerName) users[Object.keys(peerConnections).find(key => peerConnections[key] === pc)] = { name: pc.peerName };
                 });
                 broadcastData({ type: 'USER_LIST', users });
             }
@@ -289,9 +280,9 @@
             delete dataChannels[peerId];
             updateConnectionStatus();
              if (isHost) {
-                 const users = { host: {name: myName} };
+                 const users = { [myId]: {name: myName} };
                  Object.values(peerConnections).forEach(pc => {
-                     if(pc.peerName) users[pc.peerName] = { name: pc.peerName };
+                     if(pc.peerName) users[Object.keys(peerConnections).find(key => peerConnections[key] === pc)] = { name: pc.peerName };
                  });
                 broadcastData({ type: 'USER_LIST', users });
             }
@@ -341,7 +332,7 @@
         const states = Object.values(peerConnections).map(pc => pc.connectionState);
         let statusText = 'Disconnected';
         let statusClass = 'disconnected';
-        if (states.length > 0 && states.every(s => s === 'connected')) {
+        if (states.length > 0 && states.some(s => s === 'connected')) {
             statusText = 'Connected';
             statusClass = 'connected';
         } else if (states.some(s => ['connecting', 'new', 'checking'].includes(s))) {
