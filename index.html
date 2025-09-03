@@ -1,0 +1,373 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>YouTube Sync with Firebase</title>
+    <style>
+        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; line-height: 1.6; background-color: #f8f9fa; color: #343a40; padding: 20px; display: flex; justify-content: center; }
+        .container { max-width: 900px; width: 100%; margin: auto; background: #fff; padding: 25px; box-shadow: 0 4px 12px rgba(0,0,0,0.1); border-radius: 12px; }
+        h1, h2 { text-align: center; color: #e63946; }
+        .search-container, .webrtc-container, .player-container, .user-container { margin-bottom: 25px; padding: 20px; border: 1px solid #dee2e6; border-radius: 8px; background-color: #fff; }
+        input[type="text"], textarea { width: 100%; padding: 12px; margin-bottom: 10px; border: 1px solid #ced4da; border-radius: 6px; box-sizing: border-box; transition: border-color 0.2s; }
+        input[type="text"]:focus, textarea:focus { border-color: #e63946; outline: none; }
+        button { background-color: #e63946; color: white; padding: 12px 18px; border: none; border-radius: 6px; cursor: pointer; font-size: 16px; margin-right: 5px; transition: background-color 0.2s; }
+        button:hover { background-color: #d62828; }
+        button:disabled { background-color: #adb5bd; cursor: not-allowed; }
+        #player { width: 100%; aspect-ratio: 16/9; border: none; border-radius: 8px; overflow: hidden; }
+        #results { list-style: none; padding: 0; max-height: 300px; overflow-y: auto; }
+        #results li { display: flex; align-items: center; padding: 10px; border-bottom: 1px solid #f1f3f4; cursor: pointer; transition: background-color 0.2s; }
+        #results li:hover { background-color: #f8f9fa; }
+        #results li:last-child { border-bottom: none; }
+        #results img { width: 120px; height: 90px; margin-right: 15px; object-fit: cover; border-radius: 4px; }
+        .status { text-align: center; font-weight: bold; padding: 12px; border-radius: 6px; margin-top: 10px; }
+        .status.connected { background-color: #d1e7dd; color: #0f5132; }
+        .status.disconnected { background-color: #f8d7da; color: #842029; }
+        .status.connecting { background-color: #fff3cd; color: #664d03; }
+        .hidden { display: none; }
+        .info-box { background-color: #e9ecef; padding: 15px; border-radius: 6px; margin-bottom: 15px; }
+        #userList { list-style-type: none; padding-left: 0; }
+        #userList li { background-color: #f8f9fa; padding: 8px 12px; border-radius: 4px; margin-bottom: 5px; }
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <h1>YouTube Party 🎉</h1>
+
+    <div class="user-container">
+        <h2>Your Name</h2>
+        <input type="text" id="userName" placeholder="Enter your name...">
+        <button id="setNameBtn">Set Name</button>
+    </div>
+
+    <div id="mainContent" class="hidden">
+        <div class="search-container">
+            <h2>1. Find a Video</h2>
+            <input type="text" id="searchInput" placeholder="Search for a YouTube video..."><button id="searchButton">Search</button>
+            <ul id="results"></ul>
+        </div>
+        
+        <div class="player-container"><div id="player"></div></div>
+
+        <div class="webrtc-container">
+            <h2>2. Sync with Friends</h2>
+            
+            <div id="connectionManagement">
+                <div class="info-box"><p>To start a party, create an invite link and share it with friends. If you have a link, just make sure you've set your name above!</p></div>
+                <button id="createInviteBtn">Create Invite Link</button>
+                <input type="text" id="inviteLink" class="hidden" readonly>
+            </div>
+            
+            <h3>Connected Users:</h3>
+            <ul id="userList"></ul>
+            <div id="connectionStatus" class="status disconnected">Status: Disconnected</div>
+        </div>
+    </div>
+</div>
+
+<!-- Firebase SDK -->
+<script src="https://www.gstatic.com/firebasejs/9.6.7/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/9.6.7/firebase-firestore-compat.js"></script>
+
+<script>
+    // --- CONFIGURATION ---
+    const YOUTUBE_API_KEY = 'AIzaSyAEQ0bEh9JG0zrMT0JSsK4rTmARY6q8IIc';
+
+    const firebaseConfig = {
+        apiKey: "AIzaSyBbQpv91OI3oBQgYVR8o0lCmg2eMu6H5Bo",
+        authDomain: "partysync-17cd5.firebaseapp.com",
+        projectId: "partysync-17cd5",
+        storageBucket: "partysync-17cd5.firebasestorage.app",
+        messagingSenderId: "294351433712",
+        appId: "1:294351433712:web:826470510443b924a6b735",
+        measurementId: "G-PF73SF4VGY"
+    };
+
+    // --- INITIALIZE FIREBASE ---
+    firebase.initializeApp(firebaseConfig);
+    const db = firebase.firestore();
+
+    // --- DOM ELEMENTS ---
+    const userNameInput = document.getElementById('userName');
+    const setNameBtn = document.getElementById('setNameBtn');
+    const mainContent = document.getElementById('mainContent');
+    const searchButton = document.getElementById('searchButton');
+    const searchInput = document.getElementById('searchInput');
+    const resultsList = document.getElementById('results');
+    const connectionStatus = document.getElementById('connectionStatus');
+    const createInviteBtn = document.getElementById('createInviteBtn');
+    const inviteLinkInput = document.getElementById('inviteLink');
+    const userList = document.getElementById('userList');
+
+    // --- APP STATE ---
+    let myName = '';
+    let player;
+    let isHost = false;
+    let partyId = '';
+    let myId = crypto.randomUUID();
+    const peerConnections = {}; 
+    const dataChannels = {};
+    let partyDocRef;
+
+    // --- INITIALIZATION ---
+    setNameBtn.addEventListener('click', () => {
+        const name = userNameInput.value.trim();
+        if (name) {
+            myName = name;
+            document.querySelector('.user-container').classList.add('hidden');
+            mainContent.classList.remove('hidden');
+            initApp();
+        } else {
+            alert('Please enter a name.');
+        }
+    });
+    
+    function initApp() {
+        const urlParams = new URLSearchParams(window.location.search);
+        partyId = urlParams.get('party');
+        if (partyId) {
+            isHost = false;
+            createInviteBtn.classList.add('hidden'); // Guests don't create parties
+            joinParty();
+        } else {
+            isHost = true;
+        }
+    }
+
+    // --- YOUTUBE API ---
+    window.onYouTubeIframeAPIReady = () => player = new YT.Player('player', { videoId: '', events: { 'onStateChange': onPlayerStateChange } });
+    searchButton.addEventListener('click', searchYouTube);
+    searchInput.addEventListener('keypress', e => e.key === 'Enter' && searchYouTube());
+    async function searchYouTube() {
+        if (YOUTUBE_API_KEY === 'YOUR_YOUTUBE_API_KEY') return alert('Please add your YouTube API key.');
+        const query = searchInput.value; if (!query) return;
+        const url = `https://www.googleapis.com/youtube/v3/search?part=snippet&q=${encodeURIComponent(query)}&key=${YOUTUBE_API_KEY}&type=video&maxResults=10`;
+        try {
+            const res = await fetch(url);
+            const data = await res.json();
+            displayResults(data.items || []);
+        } catch (error) { console.error('Search error:', error); }
+    }
+    function displayResults(videos) {
+        resultsList.innerHTML = videos.length ? '' : '<li>No videos found.</li>';
+        videos.forEach(video => {
+            const li = document.createElement('li');
+            li.dataset.videoId = video.id.videoId;
+            li.innerHTML = `<img src="${video.snippet.thumbnails.default.url}" alt="${video.snippet.title}"><div>${video.snippet.title}</div>`;
+            li.addEventListener('click', () => broadcastData({ type: 'NEW_VIDEO', videoId: li.dataset.videoId }));
+            resultsList.appendChild(li);
+        });
+    }
+
+    // --- WEBRTC & FIREBASE SIGNALING ---
+    createInviteBtn.addEventListener('click', async () => {
+        isHost = true;
+        partyId = crypto.randomUUID();
+        const url = `${window.location.href.split('?')[0]}?party=${partyId}`;
+        inviteLinkInput.value = url;
+        inviteLinkInput.classList.remove('hidden');
+        createInviteBtn.disabled = true;
+
+        partyDocRef = db.collection('parties').doc(partyId);
+        
+        // The host needs a peer connection to generate the initial offer
+        const pc = await createPeerConnection('initial-host');
+        
+        // Now that the offer is set in Firestore, we can listen for guests
+        listenForGuests();
+    });
+
+    async function joinParty() {
+        partyDocRef = db.collection('parties').doc(partyId);
+        const pc = createPeerConnection('host'); // Connection to the host
+        
+        const offerCandidatesRef = partyDocRef.collection('offerCandidates');
+        const answerCandidatesRef = partyDocRef.collection('answerCandidates');
+        
+        pc.onicecandidate = event => {
+            if (event.candidate) {
+                answerCandidatesRef.add({ ...event.candidate.toJSON(), from: myId });
+            }
+        };
+
+        // Get host's offer
+        const offerDoc = await partyDocRef.get();
+        const { offer } = offerDoc.data();
+        await pc.setRemoteDescription(new RTCSessionDescription(offer));
+        
+        const answer = await pc.createAnswer();
+        await pc.setLocalDescription(answer);
+        
+        await partyDocRef.collection('answers').doc(myId).set({ answer, name: myName });
+
+        // Listen for host's ICE candidates
+        offerCandidatesRef.onSnapshot(snapshot => {
+            snapshot.docChanges().forEach(change => {
+                if (change.type === 'added') {
+                    pc.addIceCandidate(new RTCIceCandidate(change.doc.data()));
+                }
+            });
+        });
+        
+        dataChannels['host'] = pc.createDataChannel('sync-channel');
+        configureDataChannel('host', dataChannels['host']);
+    }
+
+    function listenForGuests() {
+        partyDocRef.collection('answers').onSnapshot(async snapshot => {
+            for (const change of snapshot.docChanges()) {
+                if (change.type === 'added') {
+                    const guestId = change.doc.id;
+                    // Avoid re-connecting to an existing guest
+                    if(peerConnections[guestId]) continue;
+
+                    const { answer, name } = change.doc.data();
+
+                    const pc = createPeerConnection(guestId, name);
+                    const offerCandidatesRef = partyDocRef.collection('offerCandidates');
+                    const answerCandidatesRef = partyDocRef.collection('answerCandidates').where('from', '==', guestId);
+                    
+                    pc.onicecandidate = event => {
+                        if (event.candidate) {
+                            offerCandidatesRef.add(event.candidate.toJSON());
+                        }
+                    };
+
+                    await pc.setRemoteDescription(new RTCSessionDescription(answer));
+
+                    answerCandidatesRef.onSnapshot(snap => {
+                        snap.docChanges().forEach(ch => {
+                            if (ch.type === 'added') {
+                                pc.addIceCandidate(new RTCIceCandidate(ch.doc.data()));
+                            }
+                        });
+                    });
+
+                    pc.ondatachannel = event => {
+                        dataChannels[guestId] = event.channel;
+                        configureDataChannel(guestId, event.channel, name);
+                    };
+                }
+            }
+        });
+    }
+
+    async function createPeerConnection(peerId, peerName) {
+        const pc = new RTCPeerConnection({ iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] });
+        peerConnections[peerId] = pc;
+        pc.peerName = peerName;
+
+        pc.onconnectionstatechange = () => updateConnectionStatus();
+        
+        if (isHost && peerId === 'initial-host') {
+            const offer = await pc.createOffer();
+            await pc.setLocalDescription(offer);
+            await partyDocRef.set({ offer }); // Host sets the initial offer
+            // This initial PC is just for the offer, we can remove it.
+            // A new one will be created for each actual guest.
+            delete peerConnections['initial-host']; 
+        }
+
+        return pc;
+    }
+
+    // --- DATA CHANNEL & SYNC ---
+    function configureDataChannel(peerId, channel, peerName = '') {
+        channel.onopen = () => {
+            updateConnectionStatus();
+            if (isHost) {
+                const users = { host: {name: myName} };
+                Object.values(peerConnections).forEach(pc => {
+                     if(pc.peerName) users[pc.peerName] = { name: pc.peerName };
+                });
+                broadcastData({ type: 'USER_LIST', users });
+            }
+        };
+        channel.onclose = () => {
+            delete peerConnections[peerId];
+            delete dataChannels[peerId];
+            updateConnectionStatus();
+             if (isHost) {
+                 const users = { host: {name: myName} };
+                 Object.values(peerConnections).forEach(pc => {
+                     if(pc.peerName) users[pc.peerName] = { name: pc.peerName };
+                 });
+                broadcastData({ type: 'USER_LIST', users });
+            }
+        };
+        channel.onmessage = event => handleReceivedData(JSON.parse(event.data), peerId);
+    }
+    
+    function onPlayerStateChange(event) {
+        broadcastData({ type: 'STATE_CHANGE', state: event.data, time: player.getCurrentTime() });
+    }
+
+    function broadcastData(data) {
+        if(data.type !== 'USER_LIST') handleReceivedData(data, 'local');
+        Object.values(dataChannels).forEach(channel => {
+            if (channel && channel.readyState === 'open') channel.send(JSON.stringify(data));
+        });
+    }
+
+    function handleReceivedData(data, senderId) {
+        if (!player) return;
+
+        if (isHost && senderId !== 'local') {
+             Object.entries(dataChannels).forEach(([id, channel]) => {
+                if (id !== senderId && channel.readyState === 'open') {
+                    channel.send(JSON.stringify(data));
+                }
+            });
+        }
+        
+        switch (data.type) {
+            case 'NEW_VIDEO':
+                if (player.getVideoData()?.video_id !== data.videoId) player.loadVideoById(data.videoId);
+                break;
+            case 'STATE_CHANGE':
+                if (Math.abs(player.getCurrentTime() - data.time) > 1.5) player.seekTo(data.time, true);
+                if (data.state === YT.PlayerState.PLAYING && player.getPlayerState() !== YT.PlayerState.PLAYING) player.playVideo();
+                else if (data.state === YT.PlayerState.PAUSED && player.getPlayerState() !== YT.PlayerState.PAUSED) player.pauseVideo();
+                break;
+            case 'USER_LIST':
+                 updateUserList(data.users);
+                break;
+        }
+    }
+    
+    // --- UI UPDATES ---
+    function updateConnectionStatus() {
+        const states = Object.values(peerConnections).map(pc => pc.connectionState);
+        let statusText = 'Disconnected';
+        let statusClass = 'disconnected';
+        if (states.length > 0 && states.every(s => s === 'connected')) {
+            statusText = 'Connected';
+            statusClass = 'connected';
+        } else if (states.some(s => ['connecting', 'new', 'checking'].includes(s))) {
+            statusText = 'Connecting...';
+            statusClass = 'connecting';
+        }
+        connectionStatus.textContent = `Status: ${statusText}`;
+        connectionStatus.className = `status ${statusClass}`;
+    }
+
+    function updateUserList(users = {}) {
+        userList.innerHTML = '';
+        Object.values(users).forEach(user => {
+            const li = document.createElement('li');
+            let suffix = '';
+            if (user.name === myName) {
+                suffix = isHost ? ' (Host, You)' : ' (You)';
+            }
+            li.textContent = user.name + suffix;
+            userList.appendChild(li);
+        });
+    }
+
+</script>
+<script src="https://www.youtube.com/iframe_api"></script>
+
+</body>
+</html>
+
