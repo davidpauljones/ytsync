@@ -546,6 +546,17 @@
         chatInput.addEventListener('keypress', e => {
             if (e.key === 'Enter') sendChatMessage();
         });
+        
+        // Graceful disconnect handler
+        window.addEventListener('beforeunload', () => {
+            const data = { type: 'USER_LEAVING' };
+            // Send a final message without processing it locally
+            Object.values(dataChannels).forEach(channel => {
+                if (channel && channel.readyState === 'open') {
+                    channel.send(JSON.stringify(data));
+                }
+            });
+        });
     }
 
     // --- YOUTUBE API ---
@@ -870,6 +881,11 @@
                     broadcastData({ type: 'QUEUE_UPDATE', queue: videoQueue });
                 }
                 break;
+            case 'USER_LEAVING':
+                if (isHost && peerConnections[senderId]) {
+                    peerConnections[senderId].close();
+                }
+                break;
             case 'QUEUE_UPDATE':
                 videoQueue = data.queue;
                 updateQueueUI();
@@ -965,6 +981,4 @@
 
 </body>
 </html>
-
-
 
