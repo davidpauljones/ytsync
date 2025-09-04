@@ -90,6 +90,7 @@
 
         .main-content {
             flex: 1;
+            min-width: 0;
         }
 
         .sidebar {
@@ -102,6 +103,7 @@
              .sidebar {
                 width: 402px;
                 margin: 0;
+                flex-shrink: 0;
             }
         }
 
@@ -120,12 +122,17 @@
             margin-bottom: 12px;
         }
 
-        #player {
+        .player-container {
             width: 100%;
-            aspect-ratio: 16/9;
+            aspect-ratio: 16 / 9;
             background-color: #000;
             border-radius: 12px;
             overflow: hidden;
+        }
+
+        #player {
+            width: 100%;
+            height: 100%;
         }
 
         #results {
@@ -557,7 +564,7 @@
         chatMessages.appendChild(messageEl);
         chatMessages.scrollTop = chatMessages.scrollHeight;
     }
-
+    
     // --- DATA CHANNEL & SYNC ---
     function configureDataChannel(peerId, channel, peerName = '') {
         channel.onopen = () => {
@@ -609,7 +616,9 @@
         
         switch (data.type) {
             case 'NEW_VIDEO':
-                if (player.getVideoData()?.video_id !== data.videoId) player.loadVideoById(data.videoId);
+                if (player.getVideoData()?.video_id !== data.videoId) {
+                    player.loadVideoById(data.videoId);
+                }
                 break;
             case 'STATE_CHANGE':
                 if (Math.abs(player.getCurrentTime() - data.time) > 1.5) player.seekTo(data.time, true);
