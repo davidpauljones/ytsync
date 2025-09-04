@@ -521,6 +521,7 @@
     let isSyncingFromHost = false; // Flag to prevent event loops on guest clients
     let lastPlayerState = -1; // Unstarted
     let officialVideoDuration = 0; // The host's duration for the current video
+    let hostHeartbeatInterval;
 
     // --- INITIALIZATION ---
     setNameBtn.addEventListener('click', () => {
@@ -544,6 +545,7 @@
             joinParty();
         } else {
             isHost = true;
+            startHostHeartbeat();
         }
 
         // Init Chat
@@ -625,6 +627,7 @@
             createdAt: firebase.firestore.FieldValue.serverTimestamp() 
         });
         listenForGuests();
+        startHostHeartbeat();
     });
 
     async function joinParty() {
@@ -869,6 +872,11 @@
         }
 
 
+        // Do not send rapid-fire state changes for buffering
+        if (event.data === YT.PlayerState.BUFFERING) {
+            return;
+        }
+
         if (event.data === lastPlayerState) return;
         lastPlayerState = event.data;
 
@@ -921,14 +929,38 @@
                 break;
             case 'STATE_CHANGE':
                 isSyncingFromHost = true;
-                if (Math.abs(player.getCurrentTime() - data.time) > 2) player.seekTo(data.time, true);
-                if (data.state === YT.PlayerState.PLAYING) player.playVideo();
-                else if (data.state === YT.PlayerState.PAUSED) player.pauseVideo();
+                if (Math.abs(player.getCurrentTime() - data.time) > 2.5) player.seekTo(data.time, true);
+                
+                if (data.state === YT.PlayerState.PLAYING && player.getPlayerState() !== YT.PlayerState.PLAYING) {
+                    player.playVideo();
+                } else if (data.state === YT.PlayerState.PAUSED && player.getPlayerState() !== YT.PlayerState.PAUSED) {
+                    player.pauseVideo();
+                }
                 
                 if (isHost && data.state === YT.PlayerState.ENDED && videoQueue.length > 0) {
                     const nextVideo = videoQueue.shift();
                     broadcastData({ type: 'NEW_VIDEO', videoId: nextVideo.videoId });
                     broadcastData({ type: 'QUEUE_UPDATE', queue: videoQueue });
+                }
+                break;
+            case 'TIME_UPDATE':
+                if (!isHost) {
+                    const localTime = player.getCurrentTime();
+                    const localState = player.getPlayerState();
+                    const timeDifference = Math.abs(localTime - data.time);
+
+                    // Only sync if significantly different, to allow for minor latency
+                    // and to not interfere when the user is actively seeking.
+                    if (timeDifference > 2.5) {
+                        isSyncingFromHost = true;
+                        player.seekTo(data.time, true);
+                    }
+                    
+                    if (localState !== data.state && data.state !== YT.PlayerState.BUFFERING) {
+                         isSyncingFromHost = true;
+                         if (data.state === YT.PlayerState.PLAYING) player.playVideo();
+                         else if (data.state === YT.PlayerState.PAUSED) player.pauseVideo();
+                    }
                 }
                 break;
             case 'ADD_TO_QUEUE':
@@ -968,11 +1000,30 @@
         }
     }
     
-    // --- HOST MIGRATION ---
+    // --- HOST MIGRATION & HEARTBEAT ---
+    function startHostHeartbeat() {
+        if (hostHeartbeatInterval) clearInterval(hostHeartbeatInterval);
+        hostHeartbeatInterval = setInterval(() => {
+            if (isHost && player && typeof player.getCurrentTime === 'function') {
+                const data = {
+                    type: 'TIME_UPDATE',
+                    time: player.getCurrentTime(),
+                    state: player.getPlayerState()
+                };
+                 Object.entries(dataChannels).forEach(([id, channel]) => {
+                    if (id !== 'host' && channel && channel.readyState === 'open') {
+                        channel.send(JSON.stringify(data));
+                    }
+                });
+            }
+        }, 2000);
+    }
+
     async function handleHostDisconnection() {
         console.log("Host disconnected. Starting election...");
         connectionStatus.textContent = 'Status: Host disconnected, electing new host...';
         connectionStatus.className = 'status connecting';
+        if (hostHeartbeatInterval) clearInterval(hostHeartbeatInterval);
 
         if (peerConnections['host']) {
             peerConnections['host'].close();
@@ -1001,6 +1052,7 @@
             currentHostId = myId;
             updateUIForNewHost();
             listenForGuests();
+            startHostHeartbeat();
 
         } catch (error) {
             console.log(`Could not become host: ${error.message}. Listening for new host to connect to.`);
@@ -1109,5 +1161,4 @@
 
 </body>
 </html>
-
 
