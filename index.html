@@ -513,6 +513,7 @@
     let isHost = false;
     let partyId = '';
     let myId = crypto.randomUUID();
+    let currentHostId = ''; // To track the current host's ID
     const peerConnections = {}; 
     const dataChannels = {};
     let partyDocRef;
@@ -606,15 +607,21 @@
     }
 
     // --- WEBRTC & FIREBASE SIGNALING ---
-    createInviteBtn.addEventListener('click', () => {
+    createInviteBtn.addEventListener('click', async () => {
         isHost = true;
         partyId = crypto.randomUUID();
+        currentHostId = myId; // I am the host
         const url = `${window.location.href.split('?')[0]}?party=${partyId}`;
         inviteLinkInput.value = url;
         inviteLinkInput.classList.remove('hidden');
         createInviteBtn.disabled = true;
 
         partyDocRef = db.collection('parties').doc(partyId);
+        // Create the party document with the initial host ID
+        await partyDocRef.set({ 
+            hostId: myId, 
+            createdAt: firebase.firestore.FieldValue.serverTimestamp() 
+        });
         listenForGuests();
     });
 
@@ -765,6 +772,9 @@
                 });
                 broadcastData({ type: 'USER_LIST', users });
 
+                // Inform the new guest who the host is
+                channel.send(JSON.stringify({ type: 'HOST_INFO', hostId: myId }));
+
                 // Sync the new user with the current video and queue state
                 if (player && player.getPlayerState() && player.getPlayerState() !== YT.PlayerState.UNSTARTED && player.getVideoData().video_id) {
                     const syncData = {
@@ -782,6 +792,13 @@
             }
         };
         channel.onclose = () => {
+            // Host migration logic for guests
+            if (peerId === 'host' && !isHost) {
+                handleHostDisconnection();
+                return; // Stop further execution for the guest
+            }
+            
+            // Existing logic for hosts when a guest disconnects
             delete peerConnections[peerId];
             delete dataChannels[peerId];
             updateConnectionStatus();
@@ -826,6 +843,9 @@
         
         // Everyone (guests and host) processes the data for their own player/UI.
         switch (data.type) {
+            case 'HOST_INFO':
+                currentHostId = data.hostId;
+                break;
             case 'INITIAL_SYNC':
                 if (player.getVideoData()?.video_id !== data.videoId) {
                     player.loadVideoById(data.videoId, data.time);
@@ -899,6 +919,73 @@
         }
     }
     
+    // --- HOST MIGRATION ---
+    async function handleHostDisconnection() {
+        console.log("Host disconnected. Starting election...");
+        connectionStatus.textContent = 'Status: Host disconnected, electing new host...';
+        connectionStatus.className = 'status connecting';
+
+        // Clean up old connection artifacts
+        if (peerConnections['host']) {
+            peerConnections['host'].close();
+            delete peerConnections['host'];
+        }
+        if (dataChannels['host']) {
+            delete dataChannels['host'];
+        }
+
+        // Wait a random amount of time to prevent all clients from trying to become host at once
+        await new Promise(r => setTimeout(r, 1000 + Math.random() * 2000));
+
+        try {
+            await db.runTransaction(async (transaction) => {
+                const partyDoc = await transaction.get(partyDocRef);
+                if (!partyDoc.exists) throw new Error("Party document has been deleted.");
+
+                // Attempt to become the new host only if the host hasn't already been replaced.
+                if (partyDoc.data().hostId === currentHostId) {
+                    transaction.update(partyDocRef, { hostId: myId });
+                } else {
+                    // A new host was already elected by someone else.
+                    throw new Error("Election already completed.");
+                }
+            });
+
+            // If the transaction was successful, this client is now the new host.
+            console.log("This client is now the new host!");
+            isHost = true;
+            currentHostId = myId;
+            updateUIForNewHost();
+            listenForGuests(); // Start listening for other guests to reconnect.
+
+        } catch (error) {
+            console.log(`Could not become host: ${error.message}. Listening for new host to connect to.`);
+            // If the transaction failed, it means another client became the host.
+            // We now need to listen for that change and then reconnect.
+            listenForNewHostAndReconnect();
+        }
+    }
+
+    function listenForNewHostAndReconnect() {
+        const unsubscribe = partyDocRef.onSnapshot(doc => {
+            if (!doc.exists) return; // Party ended
+            const newHostId = doc.data().hostId;
+            // If a new host is set, it's not me, and it's different from the one that disconnected
+            if (newHostId && newHostId !== myId && newHostId !== currentHostId) {
+                console.log(`New host detected (${newHostId}). Reconnecting...`);
+                unsubscribe(); // Stop listening for changes
+                joinParty();   // Re-initiate the connection process to the new host
+            }
+        });
+    }
+
+    function updateUIForNewHost() {
+        createInviteBtn.classList.remove('hidden');
+        createInviteBtn.disabled = true; // Link already exists
+        updateUserList(); // This will now show this user as "(Host, You)"
+        updateConnectionStatus();
+    }
+
     // --- UI UPDATES ---
     function updateQueueUI() {
         queueList.innerHTML = '';
