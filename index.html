@@ -944,7 +944,9 @@
                 break;
             case 'STATE_CHANGE':
                 isSyncingFromHost = true;
-                if (Math.abs(player.getCurrentTime() - data.time) > 2.5) player.seekTo(data.time, true);
+                if (Math.abs(player.getCurrentTime() - data.time) > 2.5) {
+                    player.seekTo(data.time, true);
+                }
                 
                 if (data.state === YT.PlayerState.PLAYING && player.getPlayerState() !== YT.PlayerState.PLAYING) {
                     player.playVideo();
@@ -969,7 +971,7 @@
                     const timeDifference = Math.abs(localTime - data.time);
                     
                     // This is the post-ad/buffer catch-up logic.
-                    // If the host is playing and we are not, or we are far behind, sync up.
+                    // If the host is playing and we are significantly behind, sync up.
                     if (data.state === YT.PlayerState.PLAYING && (localState !== YT.PlayerState.PLAYING || timeDifference > 2.5)) {
                         isSyncingFromHost = true;
                         player.seekTo(data.time, true);
