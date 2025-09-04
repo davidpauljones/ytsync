@@ -542,6 +542,22 @@
         } else {
             isHost = true;
         }
+
+        if (isHost) {
+            // Start a periodic sync from the host to keep everyone aligned
+            setInterval(() => {
+                if (player && player.getPlayerState && player.getPlayerState() === YT.PlayerState.PLAYING) {
+                    const data = { type: 'TIME_UPDATE', time: player.getCurrentTime() };
+                    // Send the action to all connected peers so they can sync up.
+                    Object.values(dataChannels).forEach(channel => {
+                        if (channel && channel.readyState === 'open') {
+                            channel.send(JSON.stringify(data));
+                        }
+                    });
+                }
+            }, 3000); // Sync every 3 seconds
+        }
+
         // Init Chat
         sendChatBtn.addEventListener('click', sendChatMessage);
         chatInput.addEventListener('keypress', e => {
@@ -776,7 +792,7 @@
                 channel.send(JSON.stringify({ type: 'HOST_INFO', hostId: myId }));
 
                 // Sync the new user with the current video and queue state
-                if (player && player.getPlayerState() && player.getPlayerState() !== YT.PlayerState.UNSTARTED && player.getVideoData().video_id) {
+                if (player && player.getPlayerState && player.getPlayerState() !== YT.PlayerState.UNSTARTED && player.getVideoData().video_id) {
                     const syncData = {
                         type: 'INITIAL_SYNC',
                         videoId: player.getVideoData().video_id,
@@ -877,15 +893,31 @@
                 }
                 break;
             case 'STATE_CHANGE':
-                if (Math.abs(player.getCurrentTime() - data.time) > 1.5) player.seekTo(data.time, true);
-                if (data.state === YT.PlayerState.PLAYING && player.getPlayerState() !== YT.PlayerState.PLAYING) player.playVideo();
-                else if (data.state === YT.PlayerState.PAUSED && player.getPlayerState() !== YT.PlayerState.PAUSED) player.pauseVideo();
+                // Guests sync to the host's state. The host does not need to sync to its own state.
+                if (!isHost) {
+                    if (Math.abs(player.getCurrentTime() - data.time) > 1.5) player.seekTo(data.time, true);
+                    if (data.state === YT.PlayerState.PLAYING && player.getPlayerState() !== YT.PlayerState.PLAYING) player.playVideo();
+                    else if (data.state === YT.PlayerState.PAUSED && player.getPlayerState() !== YT.PlayerState.PAUSED) player.pauseVideo();
+                }
                 
-                // Host checks if the video ended and there's a next one to play
+                // Host checks if the video ended and there's a next one to play. This needs to run for the host.
                 if (isHost && data.state === YT.PlayerState.ENDED && videoQueue.length > 0) {
                     const nextVideo = videoQueue.shift();
                     broadcastData({ type: 'NEW_VIDEO', videoId: nextVideo.videoId });
                     broadcastData({ type: 'QUEUE_UPDATE', queue: videoQueue });
+                }
+                break;
+             case 'TIME_UPDATE':
+                if (!isHost && player && typeof player.getCurrentTime === 'function') {
+                    // If the guest is more than 2 seconds out of sync, seek to the host's time.
+                    if (Math.abs(player.getCurrentTime() - data.time) > 2) {
+                        console.log(`Resyncing to host time: ${data.time}`);
+                        player.seekTo(data.time, true);
+                        // Also ensure the player is playing, as it might have paused after an ad.
+                        if (player.getPlayerState() !== YT.PlayerState.PLAYING) {
+                            player.playVideo();
+                        }
+                    }
                 }
                 break;
             case 'ADD_TO_QUEUE':
