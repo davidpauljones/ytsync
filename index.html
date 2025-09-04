@@ -206,34 +206,66 @@
             height: 100%;
         }
 
-        #results {
+        #results, #queueList {
             list-style: none;
             padding: 0;
-            max-height: 500px;
+            max-height: 300px;
             overflow-y: auto;
         }
 
-        #results li {
+        #results li, #queueList li {
             display: flex;
+            align-items: center;
             gap: 8px;
             cursor: pointer;
             padding: 8px;
             border-radius: 4px;
         }
-        #results li:hover {
+        #results li:hover, #queueList li:hover {
             background-color: var(--hover-background);
         }
-        #results img {
-            width: 168px;
-            height: 94px;
+        #results img, #queueList img {
+            width: 120px;
+            height: 67px;
             object-fit: cover;
-            border-radius: 8px;
+            border-radius: 4px;
             flex-shrink: 0;
         }
-        #results .video-title {
+        
+        .video-info {
+            flex-grow: 1;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            gap: 8px;
+            min-width: 0;
+        }
+
+        .video-title {
             font-weight: 500;
             color: var(--primary-text);
+            white-space: normal;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            display: -webkit-box;
+            -webkit-line-clamp: 2;
+            -webkit-box-orient: vertical;
         }
+        
+        .queue-btn, .remove-btn {
+            padding: 6px 12px;
+            font-size: 12px;
+            flex-shrink: 0;
+            background-color: var(--hover-background);
+            color: var(--primary-text);
+            border: 1px solid var(--border-color);
+            border-radius: 18px;
+            cursor: pointer;
+        }
+        body.dark .queue-btn, body.dark .remove-btn {
+            background-color: var(--yt-light-dark);
+        }
+
 
         .user-modal {
             position: fixed;
@@ -385,8 +417,13 @@
 
         <div class="sidebar">
             <div class="sidebar-section">
-                <h2>Up Next</h2>
+                <h2>Search</h2>
                 <ul id="results"></ul>
+            </div>
+            
+            <div class="sidebar-section">
+                <h2>Queue</h2>
+                <ul id="queueList"></ul>
             </div>
 
             <div class="sidebar-section">
@@ -461,6 +498,7 @@
     const searchButton = document.getElementById('searchButton');
     const searchInput = document.getElementById('searchInput');
     const resultsList = document.getElementById('results');
+    const queueList = document.getElementById('queueList');
     const connectionStatus = document.getElementById('connectionStatus');
     const createInviteBtn = document.getElementById('createInviteBtn');
     const inviteLinkInput = document.getElementById('inviteLink');
@@ -478,6 +516,7 @@
     const peerConnections = {}; 
     const dataChannels = {};
     let partyDocRef;
+    let videoQueue = [];
 
     // --- INITIALIZATION ---
     setNameBtn.addEventListener('click', () => {
@@ -526,10 +565,31 @@
     function displayResults(videos) {
         resultsList.innerHTML = videos.length ? '' : '<li>No videos found.</li>';
         videos.forEach(video => {
+            const videoId = video.id.videoId;
+            const title = video.snippet.title;
+            const thumbnailUrl = video.snippet.thumbnails.default.url;
+
             const li = document.createElement('li');
-            li.dataset.videoId = video.id.videoId;
-            li.innerHTML = `<img src="${video.snippet.thumbnails.default.url}" alt="${video.snippet.title}"><div class="video-title">${video.snippet.title}</div>`;
-            li.addEventListener('click', () => broadcastData({ type: 'NEW_VIDEO', videoId: li.dataset.videoId }));
+            li.dataset.videoId = videoId;
+            li.innerHTML = `
+                <img src="${thumbnailUrl}" alt="${title}">
+                <div class="video-info">
+                    <div class="video-title" title="Play Now">${title}</div>
+                    <button class="queue-btn">Add</button>
+                </div>
+            `;
+            
+            const clickableElements = [li.querySelector('img'), li.querySelector('.video-title')];
+            clickableElements.forEach(el => el.addEventListener('click', () => {
+                broadcastData({ type: 'NEW_VIDEO', videoId: videoId });
+            }));
+
+            li.querySelector('.queue-btn').addEventListener('click', (e) => {
+                e.stopPropagation(); 
+                const videoData = { videoId, title, thumbnailUrl };
+                broadcastData({ type: 'ADD_TO_QUEUE', video: videoData });
+            });
+
             resultsList.appendChild(li);
         });
     }
@@ -693,6 +753,21 @@
                      if(pc.peerName) users[id] = { name: pc.peerName };
                 });
                 broadcastData({ type: 'USER_LIST', users });
+
+                // Sync the new user with the current video and queue state
+                if (player && player.getPlayerState() && player.getPlayerState() !== YT.PlayerState.UNSTARTED && player.getVideoData().video_id) {
+                    const syncData = {
+                        type: 'INITIAL_SYNC',
+                        videoId: player.getVideoData().video_id,
+                        time: player.getCurrentTime(),
+                        state: player.getPlayerState(),
+                        queue: videoQueue
+                    };
+                    channel.send(JSON.stringify(syncData));
+                } else {
+                    // If no video is playing, just send the latest queue state
+                    broadcastData({ type: 'QUEUE_UPDATE', queue: videoQueue });
+                }
             }
         };
         channel.onclose = () => {
@@ -740,6 +815,25 @@
         
         // Everyone (guests and host) processes the data for their own player/UI.
         switch (data.type) {
+            case 'INITIAL_SYNC':
+                if (player.getVideoData()?.video_id !== data.videoId) {
+                    player.loadVideoById(data.videoId, data.time);
+                } else {
+                    player.seekTo(data.time, true);
+                }
+                
+                // Wait a moment for the player to buffer before setting the state
+                setTimeout(() => {
+                    if (data.state === YT.PlayerState.PLAYING) {
+                        player.playVideo();
+                    } else if (data.state === YT.PlayerState.PAUSED) {
+                        player.pauseVideo();
+                    }
+                }, 1000);
+
+                videoQueue = data.queue;
+                updateQueueUI();
+                break;
             case 'NEW_VIDEO':
                 if (player.getVideoData()?.video_id !== data.videoId) {
                     player.loadVideoById(data.videoId);
@@ -749,6 +843,36 @@
                 if (Math.abs(player.getCurrentTime() - data.time) > 1.5) player.seekTo(data.time, true);
                 if (data.state === YT.PlayerState.PLAYING && player.getPlayerState() !== YT.PlayerState.PLAYING) player.playVideo();
                 else if (data.state === YT.PlayerState.PAUSED && player.getPlayerState() !== YT.PlayerState.PAUSED) player.pauseVideo();
+                
+                // Host checks if the video ended and there's a next one to play
+                if (isHost && data.state === YT.PlayerState.ENDED && videoQueue.length > 0) {
+                    const nextVideo = videoQueue.shift();
+                    broadcastData({ type: 'NEW_VIDEO', videoId: nextVideo.videoId });
+                    broadcastData({ type: 'QUEUE_UPDATE', queue: videoQueue });
+                }
+                break;
+            case 'ADD_TO_QUEUE':
+                if (isHost) {
+                    videoQueue.push(data.video);
+                    broadcastData({ type: 'QUEUE_UPDATE', queue: videoQueue });
+                }
+                break;
+            case 'PLAY_FROM_QUEUE':
+                 if (isHost && videoQueue[data.index]) {
+                    const videoToPlay = videoQueue.splice(data.index, 1)[0];
+                    broadcastData({ type: 'NEW_VIDEO', videoId: videoToPlay.videoId });
+                    broadcastData({ type: 'QUEUE_UPDATE', queue: videoQueue });
+                }
+                break;
+            case 'REMOVE_FROM_QUEUE':
+                if (isHost) {
+                    videoQueue.splice(data.index, 1);
+                    broadcastData({ type: 'QUEUE_UPDATE', queue: videoQueue });
+                }
+                break;
+            case 'QUEUE_UPDATE':
+                videoQueue = data.queue;
+                updateQueueUI();
                 break;
             case 'USER_LIST':
                  updateUserList(data.users);
@@ -760,6 +884,36 @@
     }
     
     // --- UI UPDATES ---
+    function updateQueueUI() {
+        queueList.innerHTML = '';
+        if (videoQueue.length === 0) {
+            queueList.innerHTML = '<li>Queue is empty.</li>';
+            return;
+        }
+        videoQueue.forEach((video, index) => {
+            const li = document.createElement('li');
+            li.title = "Click to Play Now";
+            li.innerHTML = `
+                <img src="${video.thumbnailUrl}" alt="${video.title}">
+                <div class="video-info">
+                    <div class="video-title">${video.title}</div>
+                    <button class="remove-btn" title="Remove from queue" data-index="${index}">Remove</button>
+                </div>
+            `;
+
+            li.addEventListener('click', (e) => {
+                if (e.target.classList.contains('remove-btn')) return;
+                broadcastData({ type: 'PLAY_FROM_QUEUE', index });
+            });
+
+            li.querySelector('.remove-btn').addEventListener('click', (e) => {
+                e.stopPropagation();
+                broadcastData({ type: 'REMOVE_FROM_QUEUE', index });
+            });
+            queueList.appendChild(li);
+        });
+    }
+
     function updateConnectionStatus() {
         const states = Object.values(peerConnections).map(pc => pc.connectionState);
         let statusText = 'Disconnected';
@@ -811,4 +965,6 @@
 
 </body>
 </html>
+
+
 
