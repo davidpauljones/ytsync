@@ -520,6 +520,7 @@
     let videoQueue = [];
     let isSyncingFromHost = false; // Flag to prevent event loops on guest clients
     let lastPlayerState = -1; // Unstarted
+    let officialVideoDuration = 0; // The host's duration for the current video
 
     // --- INITIALIZATION ---
     setNameBtn.addEventListener('click', () => {
@@ -766,8 +767,6 @@
     
     // --- DATA CHANNEL & SYNC LOGIC ---
 
-    // This function decides whether to execute an action directly (if host)
-    // or send a request to the host (if guest).
     function handleUserAction(data) {
         if (isHost) {
             broadcastData(data);
@@ -776,7 +775,6 @@
         }
     }
 
-    // Guests use this to send requests to the host
     function sendRequestToHost(data) {
         if (isHost) return;
         const requestData = { ...data, type: `REQUEST_${data.type}` };
@@ -786,12 +784,9 @@
         }
     }
     
-    // The Host uses this to send official commands to all guests
     function broadcastData(data) {
-        // Host processes the action locally first
         handleReceivedData(data, 'local');
         
-        // Then sends the command to all connected guests
         Object.entries(dataChannels).forEach(([id, channel]) => {
             if (id !== 'host' && channel && channel.readyState === 'open') {
                 channel.send(JSON.stringify(data));
@@ -817,6 +812,7 @@
                         videoId: player.getVideoData().video_id,
                         time: player.getCurrentTime(),
                         state: player.getPlayerState(),
+                        duration: player.getDuration(),
                         queue: videoQueue
                     };
                     channel.send(JSON.stringify(syncData));
@@ -852,6 +848,25 @@
             return;
         }
 
+        // AD HANDLING: If I'm a guest and my video duration is different from the
+        // host's official duration, it means I'm watching an ad. Don't send any
+        // state changes to the host until the ad is over.
+        if (!isHost && officialVideoDuration > 0) {
+            const currentDuration = player.getDuration();
+            if (Math.abs(currentDuration - officialVideoDuration) > 2) {
+                console.log("Ad detected. Suppressing state change.");
+                return;
+            }
+        }
+        
+        // When a new video starts playing, the host captures its duration and broadcasts it.
+        if (isHost && event.data === YT.PlayerState.PLAYING && lastPlayerState !== YT.PlayerState.PLAYING) {
+             const duration = player.getDuration();
+             officialVideoDuration = duration;
+             broadcastData({ type: 'VIDEO_DURATION', duration: duration });
+        }
+
+
         if (event.data === lastPlayerState) return;
         lastPlayerState = event.data;
 
@@ -870,13 +885,13 @@
             return;
         }
         
-        // All clients (and host for local actions) process commands
         switch (data.type) {
             case 'HOST_INFO':
                 currentHostId = data.hostId;
                 break;
             case 'INITIAL_SYNC':
                 isSyncingFromHost = true;
+                officialVideoDuration = data.duration;
                 if (player.getVideoData()?.video_id !== data.videoId) {
                     player.loadVideoById(data.videoId, data.time);
                 } else {
@@ -892,8 +907,12 @@
                 videoQueue = data.queue;
                 updateQueueUI();
                 break;
+            case 'VIDEO_DURATION':
+                officialVideoDuration = data.duration;
+                break;
             case 'NEW_VIDEO':
                 isSyncingFromHost = true;
+                officialVideoDuration = 0; // Reset duration until host sends new one
                 if (player.getVideoData()?.video_id !== data.videoId) {
                     player.loadVideoById(data.videoId);
                 }
