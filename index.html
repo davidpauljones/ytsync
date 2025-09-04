@@ -777,6 +777,19 @@
 
     function sendRequestToHost(data) {
         if (isHost) return;
+
+        // AD HANDLING: If I'm a guest and my video duration is different from the
+        // host's official duration, it means I'm likely watching an ad. Don't send any
+        // state changes to the host until the ad is over.
+        if (data.type === 'STATE_CHANGE' && officialVideoDuration > 0) {
+            const currentDuration = player.getDuration();
+            // A duration of 0 often means the video (or ad) is still loading.
+            if (currentDuration === 0 || Math.abs(currentDuration - officialVideoDuration) > 2) {
+                console.log("Ad or buffer detected. Suppressing request to host.");
+                return;
+            }
+        }
+
         const requestData = { ...data, type: `REQUEST_${data.type}` };
         const hostChannel = dataChannels['host'];
         if (hostChannel && hostChannel.readyState === 'open') {
@@ -847,17 +860,6 @@
             lastPlayerState = event.data;
             return;
         }
-
-        // AD HANDLING: If I'm a guest and my video duration is different from the
-        // host's official duration, it means I'm watching an ad. Don't send any
-        // state changes to the host until the ad is over.
-        if (!isHost && officialVideoDuration > 0) {
-            const currentDuration = player.getDuration();
-            if (Math.abs(currentDuration - officialVideoDuration) > 2) {
-                console.log("Ad detected. Suppressing state change.");
-                return;
-            }
-        }
         
         // When a new video starts playing, the host captures its duration and broadcasts it.
         if (isHost && event.data === YT.PlayerState.PLAYING && lastPlayerState !== YT.PlayerState.PLAYING) {
@@ -920,8 +922,8 @@
             case 'STATE_CHANGE':
                 isSyncingFromHost = true;
                 if (Math.abs(player.getCurrentTime() - data.time) > 2) player.seekTo(data.time, true);
-                if (data.state === YT.PlayerState.PLAYING && player.getPlayerState() !== YT.PlayerState.PLAYING) player.playVideo();
-                else if (data.state === YT.PlayerState.PAUSED && player.getPlayerState() !== YT.PlayerState.PAUSED) player.pauseVideo();
+                if (data.state === YT.PlayerState.PLAYING) player.playVideo();
+                else if (data.state === YT.PlayerState.PAUSED) player.pauseVideo();
                 
                 if (isHost && data.state === YT.PlayerState.ENDED && videoQueue.length > 0) {
                     const nextVideo = videoQueue.shift();
@@ -1107,4 +1109,5 @@
 
 </body>
 </html>
+
 
