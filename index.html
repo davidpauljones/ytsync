@@ -522,6 +522,7 @@
     let lastPlayerState = -1; // Unstarted
     let officialVideoDuration = 0; // The host's duration for the current video
     let hostHeartbeatInterval;
+    let lastUserActionTimestamp = 0; // To prevent heartbeat from overriding user actions
 
     // --- INITIALIZATION ---
     setNameBtn.addEventListener('click', () => {
@@ -858,29 +859,43 @@
     }
     
     function onPlayerStateChange(event) {
+        // If this change was caused by the host, just update our state and stop.
         if (isSyncingFromHost) {
             isSyncingFromHost = false;
             lastPlayerState = event.data;
             return;
         }
-        
-        // When a new video starts playing, the host captures its duration and broadcasts it.
-        if (isHost && event.data === YT.PlayerState.PLAYING && lastPlayerState !== YT.PlayerState.PLAYING) {
-             const duration = player.getDuration();
-             officialVideoDuration = duration;
-             broadcastData({ type: 'VIDEO_DURATION', duration: duration });
-        }
-
-
-        // Do not send rapid-fire state changes for buffering
+    
+        // Ignore transient buffering events.
         if (event.data === YT.PlayerState.BUFFERING) {
             return;
         }
-
-        if (event.data === lastPlayerState) return;
-        lastPlayerState = event.data;
-
-        const actionData = { type: 'STATE_CHANGE', state: event.data, time: player.getCurrentTime() };
+    
+        // If the new state is the same as the last known state, do nothing.
+        // This is the primary protection against event loops.
+        if (event.data === lastPlayerState) {
+            return;
+        }
+        
+        // A real state change has occurred, initiated by the user.
+        // Record the timestamp of this action.
+        lastUserActionTimestamp = Date.now();
+    
+        // Update our last known state.
+        const newState = event.data;
+        lastPlayerState = newState;
+        
+        // Host-specific duty: When a video starts, set and broadcast its official duration.
+        if (isHost && newState === YT.PlayerState.PLAYING) {
+             const duration = player.getDuration();
+             if (Math.abs(duration - officialVideoDuration) > 1) {
+                 officialVideoDuration = duration;
+                 broadcastData({ type: 'VIDEO_DURATION', duration: duration });
+             }
+        }
+        
+        // Prepare and send the action to the host/guests.
+        const actionData = { type: 'STATE_CHANGE', state: newState, time: player.getCurrentTime() };
         handleUserAction(actionData);
     }
 
@@ -945,21 +960,20 @@
                 break;
             case 'TIME_UPDATE':
                 if (!isHost) {
+                    // If the user has taken an action in the last 3 seconds, ignore the heartbeat's
+                    // state update to prevent overriding the user's intent (e.g., un-pausing).
+                    if (Date.now() - lastUserActionTimestamp < 3000) break;
+
                     const localTime = player.getCurrentTime();
                     const localState = player.getPlayerState();
                     const timeDifference = Math.abs(localTime - data.time);
-
-                    // Only sync if significantly different, to allow for minor latency
-                    // and to not interfere when the user is actively seeking.
-                    if (timeDifference > 2.5) {
+                    
+                    // This is the post-ad/buffer catch-up logic.
+                    // If the host is playing and we are not, or we are far behind, sync up.
+                    if (data.state === YT.PlayerState.PLAYING && (localState !== YT.PlayerState.PLAYING || timeDifference > 2.5)) {
                         isSyncingFromHost = true;
                         player.seekTo(data.time, true);
-                    }
-                    
-                    if (localState !== data.state && data.state !== YT.PlayerState.BUFFERING) {
-                         isSyncingFromHost = true;
-                         if (data.state === YT.PlayerState.PLAYING) player.playVideo();
-                         else if (data.state === YT.PlayerState.PAUSED) player.pauseVideo();
+                        player.playVideo();
                     }
                 }
                 break;
