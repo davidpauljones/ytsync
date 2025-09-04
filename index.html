@@ -782,12 +782,8 @@
     function sendRequestToHost(data) {
         if (isHost) return;
 
-        // AD HANDLING: If I'm a guest and my video duration is different from the
-        // host's official duration, it means I'm likely watching an ad. Don't send any
-        // state changes to the host until the ad is over.
         if (data.type === 'STATE_CHANGE' && officialVideoDuration > 0) {
             const currentDuration = player.getDuration();
-            // A duration of 0 often means the video (or ad) is still loading.
             if (currentDuration === 0 || Math.abs(currentDuration - officialVideoDuration) > 2) {
                 console.log("Ad or buffer detected. Suppressing request to host.");
                 return;
@@ -859,33 +855,25 @@
     }
     
     function onPlayerStateChange(event) {
-        // If this change was caused by the host, just update our state and stop.
         if (isSyncingFromHost) {
             isSyncingFromHost = false;
             lastPlayerState = event.data;
             return;
         }
     
-        // Ignore transient buffering events.
         if (event.data === YT.PlayerState.BUFFERING) {
             return;
         }
     
-        // If the new state is the same as the last known state, do nothing.
-        // This is the primary protection against event loops.
         if (event.data === lastPlayerState) {
             return;
         }
         
-        // A real state change has occurred, initiated by the user.
-        // Record the timestamp of this action.
         lastUserActionTimestamp = Date.now();
     
-        // Update our last known state.
         const newState = event.data;
         lastPlayerState = newState;
         
-        // Host-specific duty: When a video starts, set and broadcast its official duration.
         if (isHost && newState === YT.PlayerState.PLAYING) {
              const duration = player.getDuration();
              if (Math.abs(duration - officialVideoDuration) > 1) {
@@ -894,7 +882,6 @@
              }
         }
         
-        // Prepare and send the action to the host/guests.
         const actionData = { type: 'STATE_CHANGE', state: newState, time: player.getCurrentTime() };
         handleUserAction(actionData);
     }
@@ -903,7 +890,6 @@
     function handleReceivedData(data, senderId) {
         if (!player && data.type.includes('VIDEO')) return;
 
-        // Host handles requests from guests
         if (isHost && data.type.startsWith('REQUEST_')) {
             const commandData = { ...data, type: data.type.replace('REQUEST_', '') };
             broadcastData(commandData);
@@ -937,13 +923,15 @@
                 break;
             case 'NEW_VIDEO':
                 isSyncingFromHost = true;
-                officialVideoDuration = 0; // Reset duration until host sends new one
+                officialVideoDuration = 0;
                 if (player.getVideoData()?.video_id !== data.videoId) {
                     player.loadVideoById(data.videoId);
                 }
                 break;
             case 'STATE_CHANGE':
                 isSyncingFromHost = true;
+                lastPlayerState = data.state;
+                
                 if (Math.abs(player.getCurrentTime() - data.time) > 2.5) {
                     player.seekTo(data.time, true);
                 }
@@ -962,17 +950,17 @@
                 break;
             case 'TIME_UPDATE':
                 if (!isHost) {
-                    // If the user has taken an action in the last 3 seconds, ignore the heartbeat's
-                    // state update to prevent overriding the user's intent (e.g., un-pausing).
                     if (Date.now() - lastUserActionTimestamp < 3000) break;
 
                     const localTime = player.getCurrentTime();
                     const localState = player.getPlayerState();
                     const timeDifference = Math.abs(localTime - data.time);
                     
-                    // This is the post-ad/buffer catch-up logic.
-                    // If the host is playing and we are significantly behind, sync up.
                     if (data.state === YT.PlayerState.PLAYING && (localState !== YT.PlayerState.PLAYING || timeDifference > 2.5)) {
+                        const currentDuration = player.getDuration();
+                        if (officialVideoDuration > 0 && Math.abs(currentDuration - officialVideoDuration) > 2) {
+                            break; 
+                        }
                         isSyncingFromHost = true;
                         player.seekTo(data.time, true);
                         player.playVideo();
