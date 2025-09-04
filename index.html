@@ -518,6 +518,8 @@
     const dataChannels = {};
     let partyDocRef;
     let videoQueue = [];
+    let isSyncingFromHost = false; // Flag to prevent event loops on guest clients
+    let lastPlayerState = -1; // Unstarted
 
     // --- INITIALIZATION ---
     setNameBtn.addEventListener('click', () => {
@@ -543,21 +545,6 @@
             isHost = true;
         }
 
-        if (isHost) {
-            // Start a periodic sync from the host to keep everyone aligned
-            setInterval(() => {
-                if (player && player.getPlayerState && player.getPlayerState() === YT.PlayerState.PLAYING) {
-                    const data = { type: 'TIME_UPDATE', time: player.getCurrentTime() };
-                    // Send the action to all connected peers so they can sync up.
-                    Object.values(dataChannels).forEach(channel => {
-                        if (channel && channel.readyState === 'open') {
-                            channel.send(JSON.stringify(data));
-                        }
-                    });
-                }
-            }, 3000); // Sync every 3 seconds
-        }
-
         // Init Chat
         sendChatBtn.addEventListener('click', sendChatMessage);
         chatInput.addEventListener('keypress', e => {
@@ -567,7 +554,6 @@
         // Graceful disconnect handler
         window.addEventListener('beforeunload', () => {
             const data = { type: 'USER_LEAVING' };
-            // Send a final message without processing it locally
             Object.values(dataChannels).forEach(channel => {
                 if (channel && channel.readyState === 'open') {
                     channel.send(JSON.stringify(data));
@@ -609,13 +595,13 @@
             
             const clickableElements = [li.querySelector('img'), li.querySelector('.video-title')];
             clickableElements.forEach(el => el.addEventListener('click', () => {
-                broadcastData({ type: 'NEW_VIDEO', videoId: videoId });
+                handleUserAction({ type: 'NEW_VIDEO', videoId: videoId });
             }));
 
             li.querySelector('.queue-btn').addEventListener('click', (e) => {
                 e.stopPropagation(); 
                 const videoData = { videoId, title, thumbnailUrl };
-                broadcastData({ type: 'ADD_TO_QUEUE', video: videoData });
+                handleUserAction({ type: 'ADD_TO_QUEUE', video: videoData });
             });
 
             resultsList.appendChild(li);
@@ -633,7 +619,6 @@
         createInviteBtn.disabled = true;
 
         partyDocRef = db.collection('parties').doc(partyId);
-        // Create the party document with the initial host ID
         await partyDocRef.set({ 
             hostId: myId, 
             createdAt: firebase.firestore.FieldValue.serverTimestamp() 
@@ -737,12 +722,14 @@
     function sendChatMessage() {
         const text = chatInput.value.trim();
         if (text) {
-            const messageData = {
-                type: 'CHAT_MESSAGE',
-                text: text,
-                sender: myName
-            };
-            broadcastData(messageData);
+            const messageData = { type: 'CHAT_MESSAGE', text: text, sender: myName };
+            // Chat messages are sent directly, not as requests
+            Object.values(dataChannels).forEach(channel => {
+                if (channel && channel.readyState === 'open') {
+                    channel.send(JSON.stringify(messageData));
+                }
+            });
+            displayChatMessage(messageData); // Display local message immediately
             chatInput.value = '';
         }
     }
@@ -777,7 +764,41 @@
         chatMessages.scrollTop = chatMessages.scrollHeight;
     }
     
-    // --- DATA CHANNEL & SYNC ---
+    // --- DATA CHANNEL & SYNC LOGIC ---
+
+    // This function decides whether to execute an action directly (if host)
+    // or send a request to the host (if guest).
+    function handleUserAction(data) {
+        if (isHost) {
+            broadcastData(data);
+        } else {
+            sendRequestToHost(data);
+        }
+    }
+
+    // Guests use this to send requests to the host
+    function sendRequestToHost(data) {
+        if (isHost) return;
+        const requestData = { ...data, type: `REQUEST_${data.type}` };
+        const hostChannel = dataChannels['host'];
+        if (hostChannel && hostChannel.readyState === 'open') {
+            hostChannel.send(JSON.stringify(requestData));
+        }
+    }
+    
+    // The Host uses this to send official commands to all guests
+    function broadcastData(data) {
+        // Host processes the action locally first
+        handleReceivedData(data, 'local');
+        
+        // Then sends the command to all connected guests
+        Object.entries(dataChannels).forEach(([id, channel]) => {
+            if (id !== 'host' && channel && channel.readyState === 'open') {
+                channel.send(JSON.stringify(data));
+            }
+        });
+    }
+
     function configureDataChannel(peerId, channel, peerName = '') {
         channel.onopen = () => {
             updateConnectionStatus();
@@ -788,10 +809,8 @@
                 });
                 broadcastData({ type: 'USER_LIST', users });
 
-                // Inform the new guest who the host is
                 channel.send(JSON.stringify({ type: 'HOST_INFO', hostId: myId }));
 
-                // Sync the new user with the current video and queue state
                 if (player && player.getPlayerState && player.getPlayerState() !== YT.PlayerState.UNSTARTED && player.getVideoData().video_id) {
                     const syncData = {
                         type: 'INITIAL_SYNC',
@@ -802,19 +821,16 @@
                     };
                     channel.send(JSON.stringify(syncData));
                 } else {
-                    // If no video is playing, just send the latest queue state
                     broadcastData({ type: 'QUEUE_UPDATE', queue: videoQueue });
                 }
             }
         };
         channel.onclose = () => {
-            // Host migration logic for guests
             if (peerId === 'host' && !isHost) {
                 handleHostDisconnection();
-                return; // Stop further execution for the guest
+                return;
             }
             
-            // Existing logic for hosts when a guest disconnects
             delete peerConnections[peerId];
             delete dataChannels[peerId];
             updateConnectionStatus();
@@ -830,94 +846,68 @@
     }
     
     function onPlayerStateChange(event) {
-        // ONLY the host should be the source of truth for playback state.
-        // This prevents a guest watching an ad from sending a bad time value
-        // that de-syncs the entire party. Guests will re-sync to the host's
-        // state after their ad finishes.
-        if (isHost) {
-            broadcastData({ type: 'STATE_CHANGE', state: event.data, time: player.getCurrentTime() });
+        if (isSyncingFromHost) {
+            isSyncingFromHost = false;
+            lastPlayerState = event.data;
+            return;
         }
+
+        if (event.data === lastPlayerState) return;
+        lastPlayerState = event.data;
+
+        const actionData = { type: 'STATE_CHANGE', state: event.data, time: player.getCurrentTime() };
+        handleUserAction(actionData);
     }
 
-    function broadcastData(data) {
-        // Process the action on the local client immediately.
-        handleReceivedData(data, 'local');
-        
-        // Send the action to all connected peers so they can sync up.
-        Object.values(dataChannels).forEach(channel => {
-            if (channel && channel.readyState === 'open') {
-                channel.send(JSON.stringify(data));
-            }
-        });
-    }
 
     function handleReceivedData(data, senderId) {
         if (!player && data.type.includes('VIDEO')) return;
 
-        // If I am the host and this message is from a guest, rebroadcast it to other guests.
-        if (isHost && senderId !== 'local') {
-             Object.entries(dataChannels).forEach(([id, channel]) => {
-                if (id !== senderId && channel.readyState === 'open') {
-                    channel.send(JSON.stringify(data));
-                }
-            });
+        // Host handles requests from guests
+        if (isHost && data.type.startsWith('REQUEST_')) {
+            const commandData = { ...data, type: data.type.replace('REQUEST_', '') };
+            broadcastData(commandData);
+            return;
         }
         
-        // Everyone (guests and host) processes the data for their own player/UI.
+        // All clients (and host for local actions) process commands
         switch (data.type) {
             case 'HOST_INFO':
                 currentHostId = data.hostId;
                 break;
             case 'INITIAL_SYNC':
+                isSyncingFromHost = true;
                 if (player.getVideoData()?.video_id !== data.videoId) {
                     player.loadVideoById(data.videoId, data.time);
                 } else {
                     player.seekTo(data.time, true);
                 }
                 
-                // Wait a moment for the player to buffer before setting the state
                 setTimeout(() => {
-                    if (data.state === YT.PlayerState.PLAYING) {
-                        player.playVideo();
-                    } else if (data.state === YT.PlayerState.PAUSED) {
-                        player.pauseVideo();
-                    }
+                    isSyncingFromHost = true;
+                    if (data.state === YT.PlayerState.PLAYING) player.playVideo();
+                    else if (data.state === YT.PlayerState.PAUSED) player.pauseVideo();
                 }, 1000);
 
                 videoQueue = data.queue;
                 updateQueueUI();
                 break;
             case 'NEW_VIDEO':
+                isSyncingFromHost = true;
                 if (player.getVideoData()?.video_id !== data.videoId) {
                     player.loadVideoById(data.videoId);
                 }
                 break;
             case 'STATE_CHANGE':
-                // Guests sync to the host's state. The host does not need to sync to its own state.
-                if (!isHost) {
-                    if (Math.abs(player.getCurrentTime() - data.time) > 1.5) player.seekTo(data.time, true);
-                    if (data.state === YT.PlayerState.PLAYING && player.getPlayerState() !== YT.PlayerState.PLAYING) player.playVideo();
-                    else if (data.state === YT.PlayerState.PAUSED && player.getPlayerState() !== YT.PlayerState.PAUSED) player.pauseVideo();
-                }
+                isSyncingFromHost = true;
+                if (Math.abs(player.getCurrentTime() - data.time) > 2) player.seekTo(data.time, true);
+                if (data.state === YT.PlayerState.PLAYING && player.getPlayerState() !== YT.PlayerState.PLAYING) player.playVideo();
+                else if (data.state === YT.PlayerState.PAUSED && player.getPlayerState() !== YT.PlayerState.PAUSED) player.pauseVideo();
                 
-                // Host checks if the video ended and there's a next one to play. This needs to run for the host.
                 if (isHost && data.state === YT.PlayerState.ENDED && videoQueue.length > 0) {
                     const nextVideo = videoQueue.shift();
                     broadcastData({ type: 'NEW_VIDEO', videoId: nextVideo.videoId });
                     broadcastData({ type: 'QUEUE_UPDATE', queue: videoQueue });
-                }
-                break;
-             case 'TIME_UPDATE':
-                if (!isHost && player && typeof player.getCurrentTime === 'function') {
-                    // If the guest is more than 2 seconds out of sync, seek to the host's time.
-                    if (Math.abs(player.getCurrentTime() - data.time) > 2) {
-                        console.log(`Resyncing to host time: ${data.time}`);
-                        player.seekTo(data.time, true);
-                        // Also ensure the player is playing, as it might have paused after an ad.
-                        if (player.getPlayerState() !== YT.PlayerState.PLAYING) {
-                            player.playVideo();
-                        }
-                    }
                 }
                 break;
             case 'ADD_TO_QUEUE':
@@ -952,7 +942,7 @@
                  updateUserList(data.users);
                 break;
             case 'CHAT_MESSAGE':
-                displayChatMessage(data);
+                if (senderId !== 'local') displayChatMessage(data);
                 break;
         }
     }
@@ -963,7 +953,6 @@
         connectionStatus.textContent = 'Status: Host disconnected, electing new host...';
         connectionStatus.className = 'status connecting';
 
-        // Clean up old connection artifacts
         if (peerConnections['host']) {
             peerConnections['host'].close();
             delete peerConnections['host'];
@@ -972,7 +961,6 @@
             delete dataChannels['host'];
         }
 
-        // Wait a random amount of time to prevent all clients from trying to become host at once
         await new Promise(r => setTimeout(r, 1000 + Math.random() * 2000));
 
         try {
@@ -980,47 +968,41 @@
                 const partyDoc = await transaction.get(partyDocRef);
                 if (!partyDoc.exists) throw new Error("Party document has been deleted.");
 
-                // Attempt to become the new host only if the host hasn't already been replaced.
                 if (partyDoc.data().hostId === currentHostId) {
                     transaction.update(partyDocRef, { hostId: myId });
                 } else {
-                    // A new host was already elected by someone else.
                     throw new Error("Election already completed.");
                 }
             });
 
-            // If the transaction was successful, this client is now the new host.
             console.log("This client is now the new host!");
             isHost = true;
             currentHostId = myId;
             updateUIForNewHost();
-            listenForGuests(); // Start listening for other guests to reconnect.
+            listenForGuests();
 
         } catch (error) {
             console.log(`Could not become host: ${error.message}. Listening for new host to connect to.`);
-            // If the transaction failed, it means another client became the host.
-            // We now need to listen for that change and then reconnect.
             listenForNewHostAndReconnect();
         }
     }
 
     function listenForNewHostAndReconnect() {
         const unsubscribe = partyDocRef.onSnapshot(doc => {
-            if (!doc.exists) return; // Party ended
+            if (!doc.exists) return;
             const newHostId = doc.data().hostId;
-            // If a new host is set, it's not me, and it's different from the one that disconnected
             if (newHostId && newHostId !== myId && newHostId !== currentHostId) {
                 console.log(`New host detected (${newHostId}). Reconnecting...`);
-                unsubscribe(); // Stop listening for changes
-                joinParty();   // Re-initiate the connection process to the new host
+                unsubscribe();
+                joinParty();
             }
         });
     }
 
     function updateUIForNewHost() {
         createInviteBtn.classList.remove('hidden');
-        createInviteBtn.disabled = true; // Link already exists
-        updateUserList(); // This will now show this user as "(Host, You)"
+        createInviteBtn.disabled = true;
+        updateUserList();
         updateConnectionStatus();
     }
 
@@ -1044,12 +1026,12 @@
 
             li.addEventListener('click', (e) => {
                 if (e.target.classList.contains('remove-btn')) return;
-                broadcastData({ type: 'PLAY_FROM_QUEUE', index });
+                handleUserAction({ type: 'PLAY_FROM_QUEUE', index });
             });
 
             li.querySelector('.remove-btn').addEventListener('click', (e) => {
                 e.stopPropagation();
-                broadcastData({ type: 'REMOVE_FROM_QUEUE', index });
+                handleUserAction({ type: 'REMOVE_FROM_QUEUE', index });
             });
             queueList.appendChild(li);
         });
@@ -1065,9 +1047,10 @@
         if (isHost && states.length === 0) {
              statusText = 'Waiting for guests...';
              statusClass = 'connecting';
-        } else if (connectedCount > 0) {
-            statusText = `Connected to ${connectedCount} user(s)`;
-            statusClass = 'connected';
+        } else if (connectedCount > 0 || (!isHost && peerConnections['host'] && peerConnections['host'].connectionState === 'connected')) {
+             const total = isHost ? connectedCount : 1 + connectedCount;
+             statusText = `Connected to host`;
+             statusClass = 'connected';
         } else if (!isHost && states.some(s => ['connecting', 'new', 'checking'].includes(s))) {
             statusText = 'Connecting...';
             statusClass = 'connecting';
@@ -1078,14 +1061,13 @@
 
     function updateUserList(users = {}) {
         userList.innerHTML = '';
-        const uniqueUsers = {}; // Handle potential duplicates
+        const uniqueUsers = {};
         Object.values(users).forEach(user => {
             if (user.name && !uniqueUsers[user.name]) {
                  uniqueUsers[user.name] = user;
             }
         });
 
-        // Add self to the list if not present
         if (!uniqueUsers[myName]) {
              uniqueUsers[myName] = {name: myName};
         }
