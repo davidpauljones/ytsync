@@ -7,59 +7,30 @@
     <style>
         :root {
             --yt-red: #FF0000;
-            --yt-red-hover: #c00;
             --yt-dark: #212121;
             --yt-light-dark: #333;
-            
-            /* Light Theme Variables */
-            --primary-background: #f9f9f9;
-            --secondary-background: #ffffff;
-            --primary-text: #030303;
-            --secondary-text: #606060;
-            --border-color: #e0e0e0;
-            --hover-background: #f2f2f2;
-            --input-background: #ffffff;
-            --header-background: var(--yt-dark);
-            --header-text: #ffffff;
-            --search-button-bg: #f8f8f8;
-            --search-input-bg: #fff;
-            --search-input-border: #ccc;
-            --search-input-focus-border: #1c62b9;
-        }
-
-        body.dark {
-            /* Dark Theme Variables */
-            --primary-background: #0f0f0f;
-            --secondary-background: #212121;
-            --primary-text: #f1f1f1;
-            --secondary-text: #aaaaaa;
-            --border-color: #3d3d3d;
-            --hover-background: #3d3d3d;
-            --input-background: #121212;
-            --header-background: #212121;
-            --header-text: #ffffff;
-            --search-button-bg: #3d3d3d;
-            --search-input-bg: #121212;
-            --search-input-border: #303030;
-            --search-input-focus-border: var(--yt-red);
+            --yt-background: #f9f9f9;
+            --yt-grey: #aaa;
+            --yt-light-grey: #e9e9e9;
+            --yt-text: #030303;
+            --yt-white: #fff;
         }
 
         body {
             font-family: -apple-system, BlinkMacSystemFont, 'Roboto', 'Arial', sans-serif;
             margin: 0;
-            background-color: var(--primary-background);
-            color: var(--primary-text);
-            transition: background-color 0.2s, color 0.2s;
+            background-color: var(--yt-background);
+            color: var(--yt-text);
         }
 
         .header {
             display: flex;
             align-items: center;
             justify-content: space-between;
-            padding: 0 16px 0 24px;
+            padding: 0 24px;
             height: 56px;
-            background-color: var(--header-background);
-            color: var(--header-text);
+            background-color: var(--yt-dark);
+            color: var(--yt-white);
         }
 
         .logo-container {
@@ -84,54 +55,24 @@
             padding: 10px 12px;
             font-size: 16px;
             border-radius: 40px 0 0 40px;
-            border: 1px solid var(--search-input-border);
-            background-color: var(--search-input-bg);
-            color: var(--primary-text);
+            border: 1px solid var(--yt-light-dark);
+            background-color: #121212;
+            color: var(--yt-white);
         }
         #searchInput:focus {
-            border-color: var(--search-input-focus-border);
-            outline: none;
+             border-color: var(--yt-red);
+             outline: none;
         }
 
         #searchButton {
             padding: 0 24px;
             border-radius: 0 40px 40px 0;
-            border: 1px solid var(--search-input-border);
+            border: 1px solid var(--yt-light-dark);
             border-left: none;
             cursor: pointer;
-            background-color: var(--hover-background);
-        }
-        #searchButton svg {
-             fill: var(--primary-text);
-        }
-
-        .user-actions {
-            display: flex;
-            align-items: center;
-            margin-left: 16px;
-        }
-
-        #darkModeToggle {
-            background: none;
-            border: none;
-            cursor: pointer;
-            padding: 8px;
-            border-radius: 50%;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-        }
-        #darkModeToggle:hover {
             background-color: var(--yt-light-dark);
         }
-        #darkModeToggle svg {
-            fill: var(--header-text);
-        }
-
-        .moon-icon { display: none; }
-        body.dark .sun-icon { display: none; }
-        body.dark .moon-icon { display: block; }
-
+        
         .page-container {
             display: flex;
             flex-direction: column;
@@ -178,8 +119,8 @@
         }
 
         .sidebar-section {
-            background-color: var(--secondary-background);
-            border: 1px solid var(--border-color);
+            background-color: var(--yt-white);
+            border: 1px solid var(--yt-light-grey);
             border-radius: 12px;
             padding: 16px;
             margin-bottom: 16px;
@@ -187,10 +128,9 @@
         
         .sidebar-section h2, .sidebar-section h3 {
             margin-top: 0;
-            border-bottom: 1px solid var(--border-color);
+            border-bottom: 1px solid var(--yt-light-grey);
             padding-bottom: 8px;
             margin-bottom: 12px;
-            color: var(--primary-text);
         }
 
         .player-container {
@@ -221,7 +161,7 @@
             border-radius: 4px;
         }
         #results li:hover {
-            background-color: var(--hover-background);
+            background-color: var(--yt-light-grey);
         }
         #results img {
             width: 168px;
@@ -232,7 +172,6 @@
         }
         #results .video-title {
             font-weight: 500;
-            color: var(--primary-text);
         }
 
         .user-modal {
@@ -248,34 +187,25 @@
             z-index: 100;
         }
         .user-container {
-            background: var(--secondary-background);
-            color: var(--primary-text);
+            background: var(--yt-white);
             padding: 24px;
             border-radius: 12px;
             text-align: center;
         }
-        .user-container input {
-            background-color: var(--input-background);
-            color: var(--primary-text);
-            border: 1px solid var(--border-color);
-            border-radius: 8px;
-            padding: 8px;
-            margin: 0 8px;
-        }
         .hidden { display: none; }
 
-        #inviteLink { font-size: 14px; background-color: var(--input-background); color: var(--primary-text); border: 1px solid var(--border-color); padding: 8px; border-radius: 8px; width: calc(100% - 16px); }
+        #inviteLink { font-size: 14px; }
         #createInviteBtn { width: 100%; margin-bottom: 10px;}
 
         #userList { list-style-type: none; padding-left: 0; }
-        #userList li { background-color: var(--primary-background); padding: 8px 12px; border-radius: 4px; margin-bottom: 5px; }
+        #userList li { background-color: var(--yt-background); padding: 8px 12px; border-radius: 4px; margin-bottom: 5px; }
 
         .status { text-align: center; font-weight: bold; padding: 12px; border-radius: 6px; margin-top: 10px; }
         .status.connected { background-color: #d1e7dd; color: #0f5132; }
         .status.disconnected { background-color: #f8d7da; color: #842029; }
         .status.connecting { background-color: #fff3cd; color: #664d03; }
         button { background-color: var(--yt-red); color: white; padding: 10px 16px; border: none; border-radius: 40px; cursor: pointer; font-size: 14px; font-weight: 500; transition: background-color 0.2s; }
-        button:hover { background-color: var(--yt-red-hover); }
+        button:hover { background-color: #c00; }
 
         .chat-container {
             margin-top: 24px;
@@ -289,8 +219,7 @@
         .chat-messages {
             height: 300px;
             overflow-y: auto;
-            border: 1px solid var(--border-color);
-            background-color: var(--primary-background);
+            border: 1px solid var(--yt-light-grey);
             padding: 10px;
             margin-bottom: 10px;
             border-radius: 8px;
@@ -323,12 +252,12 @@
             font-weight: 500;
             font-size: 14px;
             margin-bottom: 2px;
-            color: var(--primary-text);
+            color: #0f0f0f;
         }
         .message-text {
             font-size: 14px;
             line-height: 1.4;
-            color: var(--primary-text);
+            color: var(--yt-text);
         }
         .chat-input-container {
             display: flex;
@@ -337,10 +266,6 @@
         #chatInput {
             flex-grow: 1;
             border-radius: 20px;
-            background-color: var(--input-background);
-            border: 1px solid var(--border-color);
-            color: var(--primary-text);
-            padding: 10px;
         }
         #sendChatBtn {
             padding: 10px 20px;
@@ -367,13 +292,7 @@
         <div class="search-container-header">
             <input type="text" id="searchInput" placeholder="Search for a YouTube video...">
             <button id="searchButton">
-                <svg xmlns="http://www.w3.org/2000/svg" height="24" viewBox="0 0 24 24" width="24" focusable="false"><path d="M20.87 20.17l-5.59-5.59C16.35 13.35 17 11.75 17 10c0-3.87-3.13-7-7-7s-7 3.13-7 7 3.13 7 7 7c1.75 0 3.35-.65 4.58-1.71l5.59 5.59.71-.71zM10 16c-3.31 0-6-2.69-6-6s2.69-6 6-6 6 2.69 6 6-2.69 6-6 6z"></path></svg>
-            </button>
-        </div>
-        <div class="user-actions">
-             <button id="darkModeToggle" title="Toggle dark mode">
-                <svg class="sun-icon" xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"></circle><line x1="12" y1="1" x2="12" y2="3"></line><line x1="12" y1="21" x2="12" y2="23"></line><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"></line><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"></line><line x1="1" y1="12" x2="3" y2="12"></line><line x1="21" y1="12" x2="23" y2="12"></line><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"></line><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"></line></svg>
-                <svg class="moon-icon" xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"></path></svg>
+                <svg xmlns="http://www.w3.org/2000/svg" height="24" viewBox="0 0 24 24" width="24" fill="white" focusable="false"><path d="M20.87 20.17l-5.59-5.59C16.35 13.35 17 11.75 17 10c0-3.87-3.13-7-7-7s-7 3.13-7 7 3.13 7 7 7c1.75 0 3.35-.65 4.58-1.71l5.59 5.59.71-.71zM10 16c-3.31 0-6-2.69-6-6s2.69-6 6-6 6 2.69 6 6-2.69 6-6 6z"></path></svg>
             </button>
         </div>
     </div>
@@ -417,25 +336,6 @@
 <script src="https://www.gstatic.com/firebasejs/9.6.7/firebase-firestore-compat.js"></script>
 
 <script>
-    // --- DARK MODE LOGIC ---
-    const darkModeToggle = document.getElementById('darkModeToggle');
-
-    // Check for saved theme in localStorage and apply it
-    if (localStorage.getItem('theme') === 'dark') {
-        document.body.classList.add('dark');
-    }
-
-    darkModeToggle.addEventListener('click', () => {
-        document.body.classList.toggle('dark');
-        // Save the user's preference to localStorage
-        if (document.body.classList.contains('dark')) {
-            localStorage.setItem('theme', 'dark');
-        } else {
-            localStorage.setItem('theme', 'light');
-        }
-    });
-
-
     // --- CONFIGURATION ---
     const YOUTUBE_API_KEY = 'AIzaSyAEQ0bEh9JG0zrMT0JSsK4rTmARY6q8IIc';
 
@@ -443,7 +343,7 @@
         apiKey: "AIzaSyBbQpv91OI3oBQgYVR8o0lCmg2eMu6H5Bo",
         authDomain: "partysync-17cd5.firebaseapp.com",
         projectId: "partysync-17cd5",
-        storageBucket: "partysync-17cd5.appspot.com",
+        storageBucket: "partysync-17cd5.firebasestorage.app",
         messagingSenderId: "294351433712",
         appId: "1:294351433712:web:826470510443b924a6b735",
         measurementId: "G-PF73SF4VGY"
@@ -689,8 +589,8 @@
             updateConnectionStatus();
             if (isHost) {
                 const users = { [myId]: {name: myName} };
-                Object.entries(peerConnections).forEach(([id, pc]) => {
-                     if(pc.peerName) users[id] = { name: pc.peerName };
+                Object.values(peerConnections).forEach(pc => {
+                     if(pc.peerName) users[Object.keys(peerConnections).find(key => peerConnections[key] === pc)] = { name: pc.peerName };
                 });
                 broadcastData({ type: 'USER_LIST', users });
             }
@@ -701,9 +601,9 @@
             updateConnectionStatus();
              if (isHost) {
                  const users = { [myId]: {name: myName} };
-                Object.entries(peerConnections).forEach(([id, pc]) => {
-                     if(pc.peerName) users[id] = { name: pc.peerName };
-                });
+                 Object.values(peerConnections).forEach(pc => {
+                     if(pc.peerName) users[Object.keys(peerConnections).find(key => peerConnections[key] === pc)] = { name: pc.peerName };
+                 });
                 broadcastData({ type: 'USER_LIST', users });
             }
         };
@@ -715,21 +615,15 @@
     }
 
     function broadcastData(data) {
-        // Process the action on the local client immediately.
-        handleReceivedData(data, 'local');
-        
-        // Send the action to all connected peers so they can sync up.
+        if(data.type !== 'USER_LIST') handleReceivedData(data, 'local');
         Object.values(dataChannels).forEach(channel => {
-            if (channel && channel.readyState === 'open') {
-                channel.send(JSON.stringify(data));
-            }
+            if (channel && channel.readyState === 'open') channel.send(JSON.stringify(data));
         });
     }
 
     function handleReceivedData(data, senderId) {
         if (!player && data.type.includes('VIDEO')) return;
 
-        // If I am the host and this message is from a guest, rebroadcast it to other guests.
         if (isHost && senderId !== 'local') {
              Object.entries(dataChannels).forEach(([id, channel]) => {
                 if (id !== senderId && channel.readyState === 'open') {
@@ -738,7 +632,6 @@
             });
         }
         
-        // Everyone (guests and host) processes the data for their own player/UI.
         switch (data.type) {
             case 'NEW_VIDEO':
                 if (player.getVideoData()?.video_id !== data.videoId) {
@@ -764,16 +657,10 @@
         const states = Object.values(peerConnections).map(pc => pc.connectionState);
         let statusText = 'Disconnected';
         let statusClass = 'disconnected';
-
-        const connectedCount = states.filter(s => s === 'connected').length;
-
-        if (isHost && states.length === 0) {
-             statusText = 'Waiting for guests...';
-             statusClass = 'connecting';
-        } else if (connectedCount > 0) {
-            statusText = `Connected to ${connectedCount} user(s)`;
+        if (states.length > 0 && states.some(s => s === 'connected')) {
+            statusText = 'Connected';
             statusClass = 'connected';
-        } else if (!isHost && states.some(s => ['connecting', 'new', 'checking'].includes(s))) {
+        } else if (states.some(s => ['connecting', 'new', 'checking'].includes(s))) {
             statusText = 'Connecting...';
             statusClass = 'connecting';
         }
@@ -783,19 +670,7 @@
 
     function updateUserList(users = {}) {
         userList.innerHTML = '';
-        const uniqueUsers = {}; // Handle potential duplicates
         Object.values(users).forEach(user => {
-            if (user.name && !uniqueUsers[user.name]) {
-                 uniqueUsers[user.name] = user;
-            }
-        });
-
-        // Add self to the list if not present
-        if (!uniqueUsers[myName]) {
-             uniqueUsers[myName] = {name: myName};
-        }
-       
-        Object.values(uniqueUsers).forEach(user => {
             const li = document.createElement('li');
             let suffix = '';
             if (user.name === myName) {
