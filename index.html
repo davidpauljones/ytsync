@@ -188,6 +188,64 @@
         .status.connecting { background-color: #fff3cd; color: #664d03; }
         button { background-color: var(--yt-red); color: white; padding: 10px 16px; border: none; border-radius: 40px; cursor: pointer; font-size: 14px; font-weight: 500; transition: background-color 0.2s; }
         button:hover { background-color: #c00; }
+
+        .chat-container {
+            margin-top: 24px;
+        }
+        .chat-messages {
+            height: 300px;
+            overflow-y: auto;
+            border: 1px solid var(--yt-light-grey);
+            padding: 10px;
+            margin-bottom: 10px;
+            border-radius: 8px;
+            display: flex;
+            flex-direction: column;
+            gap: 16px;
+        }
+        .chat-message {
+            display: flex;
+            align-items: flex-start;
+            gap: 12px;
+        }
+        .avatar {
+            width: 40px;
+            height: 40px;
+            border-radius: 50%;
+            color: white;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-weight: bold;
+            flex-shrink: 0;
+            font-size: 18px;
+        }
+        .message-body {
+            display: flex;
+            flex-direction: column;
+        }
+        .sender {
+            font-weight: 500;
+            font-size: 14px;
+            margin-bottom: 2px;
+            color: #0f0f0f;
+        }
+        .message-text {
+            font-size: 14px;
+            line-height: 1.4;
+            color: var(--yt-text);
+        }
+        .chat-input-container {
+            display: flex;
+            gap: 8px;
+        }
+        #chatInput {
+            flex-grow: 1;
+            border-radius: 20px;
+        }
+        #sendChatBtn {
+            padding: 10px 20px;
+        }
     </style>
 </head>
 <body>
@@ -218,6 +276,14 @@
     <div class="page-container">
         <div class="main-content">
             <div class="player-container"><div id="player"></div></div>
+             <div class="chat-container sidebar-section">
+                <h3>Live Chat</h3>
+                <div class="chat-messages" id="chatMessages"></div>
+                <div class="chat-input-container">
+                    <input type="text" id="chatInput" placeholder="Say something...">
+                    <button id="sendChatBtn">Send</button>
+                </div>
+            </div>
         </div>
 
         <div class="sidebar">
@@ -274,6 +340,9 @@
     const createInviteBtn = document.getElementById('createInviteBtn');
     const inviteLinkInput = document.getElementById('inviteLink');
     const userList = document.getElementById('userList');
+    const chatMessages = document.getElementById('chatMessages');
+    const chatInput = document.getElementById('chatInput');
+    const sendChatBtn = document.getElementById('sendChatBtn');
 
     // --- APP STATE ---
     let myName = '';
@@ -308,6 +377,11 @@
         } else {
             isHost = true;
         }
+        // Init Chat
+        sendChatBtn.addEventListener('click', sendChatMessage);
+        chatInput.addEventListener('keypress', e => {
+            if (e.key === 'Enter') sendChatMessage();
+        });
     }
 
     // --- YOUTUBE API ---
@@ -335,9 +409,7 @@
         });
     }
 
-    // --- WEBRTC & FIREBASE SIGNALING (REFACTORED) ---
-
-    // Host creates a party link and listens for guests
+    // --- WEBRTC & FIREBASE SIGNALING ---
     createInviteBtn.addEventListener('click', () => {
         isHost = true;
         partyId = crypto.randomUUID();
@@ -350,7 +422,6 @@
         listenForGuests();
     });
 
-    // Guest joins a party by creating an offer
     async function joinParty() {
         partyDocRef = db.collection('parties').doc(partyId);
         const guestDocRef = partyDocRef.collection('guests').doc(myId);
@@ -370,7 +441,6 @@
         await pc.setLocalDescription(offer);
         await guestDocRef.set({ offer, name: myName });
 
-        // Listen for the host's answer
         guestDocRef.onSnapshot(async (snapshot) => {
             const data = snapshot.data();
             if (data && data.answer && !pc.currentRemoteDescription) {
@@ -378,7 +448,6 @@
             }
         });
 
-        // Listen for the host's ICE candidates
         guestDocRef.collection('hostCandidates').onSnapshot(snapshot => {
             snapshot.docChanges().forEach(change => {
                 if (change.type === 'added') {
@@ -388,13 +457,12 @@
         });
     }
 
-    // Host listens for new guests and answers their offers
     function listenForGuests() {
         partyDocRef.collection('guests').onSnapshot(async snapshot => {
             for (const change of snapshot.docChanges()) {
                 if (change.type === 'added') {
                     const guestId = change.doc.id;
-                    if(peerConnections[guestId]) continue; // Already connected
+                    if(peerConnections[guestId]) continue;
 
                     const guestDocRef = change.doc.ref;
                     const { offer, name } = change.doc.data();
@@ -417,7 +485,6 @@
                     await pc.setLocalDescription(answer);
                     await guestDocRef.update({ answer });
 
-                    // Listen for the guest's ICE candidates
                     guestDocRef.collection('guestCandidates').onSnapshot(snap => {
                         snap.docChanges().forEach(ch => {
                             if (ch.type === 'added') {
@@ -436,6 +503,59 @@
         pc.peerName = peerName;
         pc.onconnectionstatechange = () => updateConnectionStatus();
         return pc;
+    }
+
+    // --- CHAT LOGIC ---
+    const userColors = ['#ff7675', '#74b9ff', '#55efc4', '#ffeaa7', '#a29bfe', '#fd79a8', '#00cec9', '#fab1a0'];
+    const getUserColor = (userName) => {
+        let hash = 0;
+        for (let i = 0; i < userName.length; i++) {
+            hash = userName.charCodeAt(i) + ((hash << 5) - hash);
+        }
+        return userColors[Math.abs(hash % userColors.length)];
+    };
+
+    function sendChatMessage() {
+        const text = chatInput.value.trim();
+        if (text) {
+            const messageData = {
+                type: 'CHAT_MESSAGE',
+                text: text,
+                sender: myName
+            };
+            broadcastData(messageData);
+            chatInput.value = '';
+        }
+    }
+
+    function displayChatMessage({ text, sender }) {
+        const messageEl = document.createElement('div');
+        messageEl.classList.add('chat-message');
+
+        const avatarEl = document.createElement('div');
+        avatarEl.classList.add('avatar');
+        avatarEl.textContent = sender.charAt(0).toUpperCase();
+        avatarEl.style.backgroundColor = getUserColor(sender);
+
+        const messageBodyEl = document.createElement('div');
+        messageBodyEl.classList.add('message-body');
+        
+        const senderEl = document.createElement('div');
+        senderEl.classList.add('sender');
+        senderEl.textContent = sender;
+
+        const textEl = document.createElement('div');
+        textEl.classList.add('message-text');
+        textEl.textContent = text;
+        
+        messageBodyEl.appendChild(senderEl);
+        messageBodyEl.appendChild(textEl);
+
+        messageEl.appendChild(avatarEl);
+        messageEl.appendChild(messageBodyEl);
+        
+        chatMessages.appendChild(messageEl);
+        chatMessages.scrollTop = chatMessages.scrollHeight;
     }
 
     // --- DATA CHANNEL & SYNC ---
@@ -462,7 +582,7 @@
                 broadcastData({ type: 'USER_LIST', users });
             }
         };
-        channel.onmessage = event => handleReceivedData(JSON.parse(event.data), senderId);
+        channel.onmessage = event => handleReceivedData(JSON.parse(event.data), peerId);
     }
     
     function onPlayerStateChange(event) {
@@ -477,7 +597,7 @@
     }
 
     function handleReceivedData(data, senderId) {
-        if (!player) return;
+        if (!player && data.type.includes('VIDEO')) return;
 
         if (isHost && senderId !== 'local') {
              Object.entries(dataChannels).forEach(([id, channel]) => {
@@ -499,12 +619,15 @@
             case 'USER_LIST':
                  updateUserList(data.users);
                 break;
+            case 'CHAT_MESSAGE':
+                displayChatMessage(data);
+                break;
         }
     }
     
     // --- UI UPDATES ---
     function updateConnectionStatus() {
-        const states = Object.values(peerConnections).map(pc => pc.connectionstate);
+        const states = Object.values(peerConnections).map(pc => pc.connectionState);
         let statusText = 'Disconnected';
         let statusClass = 'disconnected';
         if (states.length > 0 && states.some(s => s === 'connected')) {
