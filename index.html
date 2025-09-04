@@ -814,7 +814,13 @@
     }
     
     function onPlayerStateChange(event) {
-        broadcastData({ type: 'STATE_CHANGE', state: event.data, time: player.getCurrentTime() });
+        // ONLY the host should be the source of truth for playback state.
+        // This prevents a guest watching an ad from sending a bad time value
+        // that de-syncs the entire party. Guests will re-sync to the host's
+        // state after their ad finishes.
+        if (isHost) {
+            broadcastData({ type: 'STATE_CHANGE', state: event.data, time: player.getCurrentTime() });
+        }
     }
 
     function broadcastData(data) {
