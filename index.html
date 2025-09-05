@@ -449,6 +449,7 @@
     </div>
 </div>
 
+<!-- Firebase SDK -->
 <script src="https://www.gstatic.com/firebasejs/9.6.7/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/9.6.7/firebase-firestore-compat.js"></script>
 
@@ -772,9 +773,7 @@
 
     function handleUserAction(data) {
         if (isHost) {
-            // ✅ FIXED: The host should process the action locally, not broadcast the command.
-            // The processing logic within handleReceivedData will then broadcast the result.
-            handleReceivedData(data, 'local');
+            broadcastData(data);
         } else {
             sendRequestToHost(data);
         }
@@ -893,9 +892,7 @@
 
         if (isHost && data.type.startsWith('REQUEST_')) {
             const commandData = { ...data, type: data.type.replace('REQUEST_', '') };
-            // ✅ FIXED: Process the guest's request locally instead of re-broadcasting the command.
-            // The processing logic will then broadcast the updated state (e.g., QUEUE_UPDATE).
-            handleReceivedData(commandData, 'local-request');
+            broadcastData(commandData);
             return;
         }
         
@@ -943,13 +940,6 @@
                     player.playVideo();
                 } else if (data.state === YT.PlayerState.PAUSED && player.getPlayerState() !== YT.PlayerState.PAUSED) {
                     player.pauseVideo();
-                }
-                
-                // ✅ This is the logic for automatic playback from the queue. It now works reliably.
-                if (isHost && data.state === YT.PlayerState.ENDED && videoQueue.length > 0) {
-                    const nextVideo = videoQueue.shift();
-                    broadcastData({ type: 'NEW_VIDEO', videoId: nextVideo.videoId });
-                    broadcastData({ type: 'QUEUE_UPDATE', queue: videoQueue });
                 }
                 break;
             case 'TIME_UPDATE':
@@ -1013,10 +1003,20 @@
         if (hostHeartbeatInterval) clearInterval(hostHeartbeatInterval);
         hostHeartbeatInterval = setInterval(() => {
             if (isHost && player && typeof player.getCurrentTime === 'function') {
+                const currentState = player.getPlayerState();
+
+                // ✅ FIXED: Check for ended video to reliably autoplay next in queue
+                if (currentState === YT.PlayerState.ENDED && videoQueue.length > 0) {
+                    const nextVideo = videoQueue.shift();
+                    broadcastData({ type: 'NEW_VIDEO', videoId: nextVideo.videoId });
+                    broadcastData({ type: 'QUEUE_UPDATE', queue: videoQueue });
+                    return; // Stop here to avoid sending a final update for the ended video
+                }
+
                 const data = {
                     type: 'TIME_UPDATE',
                     time: player.getCurrentTime(),
-                    state: player.getPlayerState()
+                    state: currentState
                 };
                 Object.entries(dataChannels).forEach(([id, channel]) => {
                     if (id !== 'host' && channel && channel.readyState === 'open') {
@@ -1024,7 +1024,7 @@
                     }
                 });
             }
-        }, 2000);
+        }, 1500); // Check state more frequently for responsiveness
     }
 
     async function handleHostDisconnection() {
@@ -1169,3 +1169,4 @@
 
 </body>
 </html>
+
