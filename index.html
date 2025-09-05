@@ -929,10 +929,18 @@
                 }
                 break;
             case 'STATE_CHANGE':
+                // ✅ FIX: When the host originates an action, its player is already in the correct state.
+                // This check prevents the host from processing its own broadcast, which would incorrectly
+                // set the isSyncingFromHost flag and prevent subsequent actions from being broadcast.
+                // This does NOT affect the host processing a relayed client request, because in that
+                // scenario the host's player state will NOT match data.state yet.
+                if (isHost && senderId === 'local' && player.getPlayerState() === data.state) {
+                    return;
+                }
+
                 isSyncingFromHost = true;
                 lastPlayerState = data.state;
 
-                // ✅ FIXED: Only seek if the time difference is significant, to avoid jitter.
                 if (Math.abs(player.getCurrentTime() - data.time) > 3.5) {
                     player.seekTo(data.time, true);
                 }
@@ -951,7 +959,6 @@
                     const localState = player.getPlayerState();
                     const timeDifference = Math.abs(localTime - data.time);
                     
-                    // ✅ FIXED: Increased tolerance to 3.5 seconds to be more forgiving of buffering.
                     if (data.state === YT.PlayerState.PLAYING && (localState !== YT.PlayerState.PLAYING || timeDifference > 3.5)) {
                         const currentDuration = player.getDuration();
                         if (officialVideoDuration > 0 && Math.abs(currentDuration - officialVideoDuration) > 2) {
