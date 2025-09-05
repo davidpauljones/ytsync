@@ -929,16 +929,21 @@
                 }
                 break;
             case 'STATE_CHANGE':
+                // ✅ FIXED: This new logic robustly handles state changes for both host and clients.
+                // It ensures the isSyncingFromHost flag is managed correctly to prevent loops and lock-ups.
                 isSyncingFromHost = true;
                 lastPlayerState = data.state;
-                
-                if (Math.abs(player.getCurrentTime() - data.time) > 2.5) {
-                    player.seekTo(data.time, true);
-                }
-                
-                if (data.state === YT.PlayerState.PLAYING && player.getPlayerState() !== YT.PlayerState.PLAYING) {
+
+                // Unconditionally seek. This is more robust and ensures the onStateChange event fires,
+                // which is needed to reset the isSyncingFromHost flag.
+                player.seekTo(data.time, true);
+
+                // Unconditionally set the player state. Calling playVideo() on a playing video
+                // or pauseVideo() on a paused video is harmless and also ensures the event fires.
+                if (data.state === YT.PlayerState.PLAYING) {
                     player.playVideo();
-                } else if (data.state === YT.PlayerState.PAUSED && player.getPlayerState() !== YT.PlayerState.PAUSED) {
+                } else if (data.state === YT.PlayerState.PAUSED || data.state === YT.PlayerState.ENDED) {
+                    // Also pause if the video has ended to sync the final state.
                     player.pauseVideo();
                 }
                 break;
@@ -1005,7 +1010,7 @@
             if (isHost && player && typeof player.getCurrentTime === 'function') {
                 const currentState = player.getPlayerState();
 
-                // ✅ FIXED: Check for ended video to reliably autoplay next in queue
+                // Check for ended video to reliably autoplay next in queue
                 if (currentState === YT.PlayerState.ENDED && videoQueue.length > 0) {
                     const nextVideo = videoQueue.shift();
                     broadcastData({ type: 'NEW_VIDEO', videoId: nextVideo.videoId });
