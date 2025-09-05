@@ -798,6 +798,10 @@
     }
     
     function broadcastData(data) {
+        // ✅ FIX: The logic here is tricky. The host needs to process its OWN actions
+        // but also needs to process actions relayed from guests. We differentiate
+        // by checking the senderId in handleReceivedData. 'local' means the host acted.
+        // Any other ID means a guest acted.
         handleReceivedData(data, 'local');
         
         Object.entries(dataChannels).forEach(([id, channel]) => {
@@ -840,6 +844,14 @@
                 return;
             }
             
+            // ✅ FIX: When a guest disconnects, the host cleans up their document in Firestore.
+            // This prevents "ghost" users from reappearing if a host migration occurs.
+            if (isHost && partyDocRef) {
+                partyDocRef.collection('guests').doc(peerId).delete().catch(error => {
+                    console.error("Error removing guest document:", error);
+                });
+            }
+
             delete peerConnections[peerId];
             delete dataChannels[peerId];
             updateConnectionStatus();
@@ -929,11 +941,6 @@
                 }
                 break;
             case 'STATE_CHANGE':
-                // ✅ FIX: When the host originates an action, its player is already in the correct state.
-                // This check prevents the host from processing its own broadcast, which would incorrectly
-                // set the isSyncingFromHost flag and prevent subsequent actions from being broadcast.
-                // This does NOT affect the host processing a relayed client request, because in that
-                // scenario the host's player state will NOT match data.state yet.
                 if (isHost && senderId === 'local' && player.getPlayerState() === data.state) {
                     return;
                 }
