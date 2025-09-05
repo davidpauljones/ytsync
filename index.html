@@ -102,7 +102,7 @@
             background-color: var(--hover-background);
         }
         #searchButton svg {
-             fill: var(--primary-text);
+            fill: var(--primary-text);
         }
 
         .user-actions {
@@ -168,7 +168,7 @@
         }
         
         @media (min-width: 1024px) {
-             .sidebar {
+            .sidebar {
                 grid-column: 2 / 3;
                 grid-row: 1 / 3;
                 width: 402px;
@@ -312,7 +312,7 @@
         .chat-container {
             margin-top: 24px;
         }
-         @media (min-width: 1024px) {
+        @media (min-width: 1024px) {
             .chat-container {
                 grid-column: 1 / 2;
                 grid-row: 2 / 3;
@@ -403,7 +403,7 @@
             </button>
         </div>
         <div class="user-actions">
-             <button id="darkModeToggle" title="Toggle dark mode">
+            <button id="darkModeToggle" title="Toggle dark mode">
                 <svg class="sun-icon" xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"></circle><line x1="12" y1="1" x2="12" y2="3"></line><line x1="12" y1="21" x2="12" y2="23"></line><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"></line><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"></line><line x1="1" y1="12" x2="3" y2="12"></line><line x1="21" y1="12" x2="23" y2="12"></line><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"></line><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"></line></svg>
                 <svg class="moon-icon" xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"></path></svg>
             </button>
@@ -449,7 +449,6 @@
     </div>
 </div>
 
-<!-- Firebase SDK -->
 <script src="https://www.gstatic.com/firebasejs/9.6.7/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/9.6.7/firebase-firestore-compat.js"></script>
 
@@ -773,7 +772,9 @@
 
     function handleUserAction(data) {
         if (isHost) {
-            broadcastData(data);
+            // ✅ FIXED: The host should process the action locally, not broadcast the command.
+            // The processing logic within handleReceivedData will then broadcast the result.
+            handleReceivedData(data, 'local');
         } else {
             sendRequestToHost(data);
         }
@@ -813,7 +814,7 @@
             if (isHost) {
                 const users = { [myId]: {name: myName} };
                 Object.entries(peerConnections).forEach(([id, pc]) => {
-                     if(pc.peerName) users[id] = { name: pc.peerName };
+                    if(pc.peerName) users[id] = { name: pc.peerName };
                 });
                 broadcastData({ type: 'USER_LIST', users });
 
@@ -843,10 +844,10 @@
             delete peerConnections[peerId];
             delete dataChannels[peerId];
             updateConnectionStatus();
-             if (isHost) {
-                 const users = { [myId]: {name: myName} };
+            if (isHost) {
+                const users = { [myId]: {name: myName} };
                 Object.entries(peerConnections).forEach(([id, pc]) => {
-                     if(pc.peerName) users[id] = { name: pc.peerName };
+                    if(pc.peerName) users[id] = { name: pc.peerName };
                 });
                 broadcastData({ type: 'USER_LIST', users });
             }
@@ -875,11 +876,11 @@
         lastPlayerState = newState;
         
         if (isHost && newState === YT.PlayerState.PLAYING) {
-             const duration = player.getDuration();
-             if (Math.abs(duration - officialVideoDuration) > 1) {
-                 officialVideoDuration = duration;
-                 broadcastData({ type: 'VIDEO_DURATION', duration: duration });
-             }
+            const duration = player.getDuration();
+            if (Math.abs(duration - officialVideoDuration) > 1) {
+                officialVideoDuration = duration;
+                broadcastData({ type: 'VIDEO_DURATION', duration: duration });
+            }
         }
         
         const actionData = { type: 'STATE_CHANGE', state: newState, time: player.getCurrentTime() };
@@ -892,7 +893,9 @@
 
         if (isHost && data.type.startsWith('REQUEST_')) {
             const commandData = { ...data, type: data.type.replace('REQUEST_', '') };
-            broadcastData(commandData);
+            // ✅ FIXED: Process the guest's request locally instead of re-broadcasting the command.
+            // The processing logic will then broadcast the updated state (e.g., QUEUE_UPDATE).
+            handleReceivedData(commandData, 'local-request');
             return;
         }
         
@@ -942,6 +945,7 @@
                     player.pauseVideo();
                 }
                 
+                // ✅ This is the logic for automatic playback from the queue. It now works reliably.
                 if (isHost && data.state === YT.PlayerState.ENDED && videoQueue.length > 0) {
                     const nextVideo = videoQueue.shift();
                     broadcastData({ type: 'NEW_VIDEO', videoId: nextVideo.videoId });
@@ -974,7 +978,7 @@
                 }
                 break;
             case 'PLAY_FROM_QUEUE':
-                 if (isHost && videoQueue[data.index]) {
+                if (isHost && videoQueue[data.index]) {
                     const videoToPlay = videoQueue.splice(data.index, 1)[0];
                     broadcastData({ type: 'NEW_VIDEO', videoId: videoToPlay.videoId });
                     broadcastData({ type: 'QUEUE_UPDATE', queue: videoQueue });
@@ -996,7 +1000,7 @@
                 updateQueueUI();
                 break;
             case 'USER_LIST':
-                 updateUserList(data.users);
+                updateUserList(data.users);
                 break;
             case 'CHAT_MESSAGE':
                 if (senderId !== 'local') displayChatMessage(data);
@@ -1014,7 +1018,7 @@
                     time: player.getCurrentTime(),
                     state: player.getPlayerState()
                 };
-                 Object.entries(dataChannels).forEach(([id, channel]) => {
+                Object.entries(dataChannels).forEach(([id, channel]) => {
                     if (id !== 'host' && channel && channel.readyState === 'open') {
                         channel.send(JSON.stringify(data));
                     }
@@ -1122,12 +1126,12 @@
         const connectedCount = states.filter(s => s === 'connected').length;
 
         if (isHost && states.length === 0) {
-             statusText = 'Waiting for guests...';
-             statusClass = 'connecting';
+            statusText = 'Waiting for guests...';
+            statusClass = 'connecting';
         } else if (connectedCount > 0 || (!isHost && peerConnections['host'] && peerConnections['host'].connectionState === 'connected')) {
-             const total = isHost ? connectedCount : 1 + connectedCount;
-             statusText = `Connected to host`;
-             statusClass = 'connected';
+            const total = isHost ? connectedCount : 1 + connectedCount;
+            statusText = `Connected to host`;
+            statusClass = 'connected';
         } else if (!isHost && states.some(s => ['connecting', 'new', 'checking'].includes(s))) {
             statusText = 'Connecting...';
             statusClass = 'connecting';
@@ -1141,14 +1145,14 @@
         const uniqueUsers = {};
         Object.values(users).forEach(user => {
             if (user.name && !uniqueUsers[user.name]) {
-                 uniqueUsers[user.name] = user;
+                uniqueUsers[user.name] = user;
             }
         });
 
         if (!uniqueUsers[myName]) {
-             uniqueUsers[myName] = {name: myName};
+            uniqueUsers[myName] = {name: myName};
         }
-       
+        
         Object.values(uniqueUsers).forEach(user => {
             const li = document.createElement('li');
             let suffix = '';
@@ -1165,4 +1169,3 @@
 
 </body>
 </html>
-
