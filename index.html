@@ -199,6 +199,7 @@
             background-color: #000;
             border-radius: 12px;
             overflow: hidden;
+            position: relative;
         }
 
         #player {
@@ -277,7 +278,7 @@
             display: flex;
             align-items: center;
             justify-content: center;
-            z-index: 100;
+            z-index: 1000;
         }
         .user-container {
             background: var(--secondary-background);
@@ -294,8 +295,7 @@
             padding: 8px;
             margin: 0 8px;
         }
-        .hidden { display: none; }
-
+        
         #inviteLink { font-size: 14px; background-color: var(--input-background); color: var(--primary-text); border: 1px solid var(--border-color); padding: 8px; border-radius: 8px; width: calc(100% - 16px); }
         #createInviteBtn { width: 100%; margin-bottom: 10px;}
 
@@ -377,6 +377,102 @@
         #sendChatBtn {
             padding: 10px 20px;
         }
+        
+        /* --- Toolbar & Theater Mode Styles --- */
+        .player-controls {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 8px 12px;
+            margin-top: 8px;
+            background-color: var(--secondary-background);
+            border: 1px solid var(--border-color);
+            border-radius: 12px;
+        }
+
+        .video-title-toolbar {
+            flex-grow: 1;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            font-weight: bold;
+            font-size: 16px;
+            padding-right: 16px;
+        }
+
+        #theaterModeBtn {
+            background: none;
+            border: 1px solid var(--border-color);
+            color: var(--primary-text);
+            padding: 8px;
+            border-radius: 50%;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            z-index: 50; /* Keep it above player but below overlay */
+            flex-shrink: 0;
+        }
+        #theaterModeBtn:hover {
+            background-color: var(--hover-background);
+        }
+        #theaterModeBtn svg {
+            stroke: var(--primary-text);
+        }
+
+        body.theater-mode .main-content {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100vw;
+            height: 100vh;
+            background-color: #000;
+            z-index: 500;
+            padding: 0;
+            margin: 0;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+        }
+        body.theater-mode .player-container {
+            width: 100%;
+            height: 100%;
+            border-radius: 0;
+        }
+        body.theater-mode .player-controls {
+            position: absolute;
+            top: 10px;
+            left: 10px;
+            right: 10px;
+            margin-top: 0;
+            background-color: rgba(0,0,0,0.5);
+            border: 1px solid rgba(255,255,255,0.2);
+        }
+        body.theater-mode .video-title-toolbar {
+            color: #fff;
+        }
+         body.theater-mode #theaterModeBtn {
+            border-color: rgba(255,255,255,0.2);
+         }
+         body.theater-mode #theaterModeBtn svg {
+            stroke: #fff;
+        }
+         body.theater-mode #theaterModeBtn:hover {
+            background-color: rgba(255,255,255,0.2);
+        }
+        body.theater-mode .header, body.theater-mode .sidebar, body.theater-mode .chat-container, body.theater-mode .page-container > .main-content ~ * {
+            display: none;
+        }
+
+        .expand-icon { display: block; }
+        .close-icon { display: none; }
+        body.theater-mode .expand-icon { display: none; }
+        body.theater-mode .close-icon { display: block; }
+
+        /* This utility class must be one of the last rules to ensure it overrides other display properties */
+        .hidden { display: none !important; }
+
     </style>
 </head>
 <body>
@@ -413,6 +509,13 @@
     <div class="page-container">
         <div class="main-content">
             <div class="player-container"><div id="player"></div></div>
+            <div class="player-controls">
+                <div id="videoTitle" class="video-title-toolbar">No video loaded</div>
+                <button id="theaterModeBtn" title="Theater Mode">
+                    <svg class="expand-icon" xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 3H5a2 2 0 0 0-2 2v3m18 0V5a2 2 0 0 0-2-2h-3m0 18h3a2 2 0 0 0 2-2v-3M3 16v3a2 2 0 0 0 2 2h3"/></svg>
+                    <svg class="close-icon" xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
+                </button>
+            </div>
         </div>
 
         <div class="sidebar">
@@ -506,6 +609,7 @@
     const chatMessages = document.getElementById('chatMessages');
     const chatInput = document.getElementById('chatInput');
     const sendChatBtn = document.getElementById('sendChatBtn');
+    const videoTitleElement = document.getElementById('videoTitle');
 
     // --- APP STATE ---
     let myName = '';
@@ -523,6 +627,7 @@
     let officialVideoDuration = 0; // The host's duration for the current video
     let hostHeartbeatInterval;
     let lastUserActionTimestamp = 0; // To prevent heartbeat from overriding user actions
+    let intentToAutoPlay = false; // Flag to handle autoplay for new videos
 
     // --- INITIALIZATION ---
     setNameBtn.addEventListener('click', () => {
@@ -566,6 +671,21 @@
         });
     }
 
+    // --- THEATER MODE ---
+    const theaterModeBtn = document.getElementById('theaterModeBtn');
+    theaterModeBtn.addEventListener('click', () => {
+        document.body.classList.toggle('theater-mode');
+        const inTheaterMode = document.body.classList.contains('theater-mode');
+        theaterModeBtn.title = inTheaterMode ? 'Exit Theater Mode' : 'Theater Mode';
+    });
+    document.addEventListener('keydown', (event) => {
+        if (event.key === 'Escape' && document.body.classList.contains('theater-mode')) {
+            document.body.classList.remove('theater-mode');
+            theaterModeBtn.title = 'Theater Mode';
+        }
+    });
+
+
     // --- YOUTUBE API ---
     window.onYouTubeIframeAPIReady = () => player = new YT.Player('player', { videoId: '', events: { 'onStateChange': onPlayerStateChange } });
     searchButton.addEventListener('click', searchYouTube);
@@ -599,7 +719,7 @@
             
             const clickableElements = [li.querySelector('img'), li.querySelector('.video-title')];
             clickableElements.forEach(el => el.addEventListener('click', () => {
-                handleUserAction({ type: 'NEW_VIDEO', videoId: videoId });
+                handleUserAction({ type: 'NEW_VIDEO', videoId: videoId, autoPlay: true });
             }));
 
             li.querySelector('.queue-btn').addEventListener('click', (e) => {
@@ -798,10 +918,6 @@
     }
     
     function broadcastData(data) {
-        // ✅ FIX: The logic here is tricky. The host needs to process its OWN actions
-        // but also needs to process actions relayed from guests. We differentiate
-        // by checking the senderId in handleReceivedData. 'local' means the host acted.
-        // Any other ID means a guest acted.
         handleReceivedData(data, 'local');
         
         Object.entries(dataChannels).forEach(([id, channel]) => {
@@ -844,8 +960,6 @@
                 return;
             }
             
-            // ✅ FIX: When a guest disconnects, the host cleans up their document in Firestore.
-            // This prevents "ghost" users from reappearing if a host migration occurs.
             if (isHost && partyDocRef) {
                 partyDocRef.collection('guests').doc(peerId).delete().catch(error => {
                     console.error("Error removing guest document:", error);
@@ -867,6 +981,16 @@
     }
     
     function onPlayerStateChange(event) {
+        if (event.data === YT.PlayerState.PLAYING || event.data === YT.PlayerState.CUED) {
+            updateVideoTitle();
+        }
+
+        if (isHost && intentToAutoPlay && event.data === YT.PlayerState.CUED) {
+            intentToAutoPlay = false; // Consume the intent
+            handleUserAction({ type: 'STATE_CHANGE', state: YT.PlayerState.PLAYING, time: 0 });
+            return; 
+        }
+        
         if (isSyncingFromHost) {
             isSyncingFromHost = false;
             lastPlayerState = event.data;
@@ -937,7 +1061,12 @@
                 isSyncingFromHost = true;
                 officialVideoDuration = 0;
                 if (player.getVideoData()?.video_id !== data.videoId) {
+                    if (isHost && data.autoPlay) {
+                        intentToAutoPlay = true;
+                    }
                     player.loadVideoById(data.videoId);
+                } else if (data.autoPlay) { 
+                    player.playVideo();
                 }
                 break;
             case 'STATE_CHANGE':
@@ -986,7 +1115,7 @@
             case 'PLAY_FROM_QUEUE':
                 if (isHost && videoQueue[data.index]) {
                     const videoToPlay = videoQueue.splice(data.index, 1)[0];
-                    broadcastData({ type: 'NEW_VIDEO', videoId: videoToPlay.videoId });
+                    broadcastData({ type: 'NEW_VIDEO', videoId: videoToPlay.videoId, autoPlay: true });
                     broadcastData({ type: 'QUEUE_UPDATE', queue: videoQueue });
                 }
                 break;
@@ -1024,7 +1153,7 @@
                 // Check for ended video to reliably autoplay next in queue
                 if (currentState === YT.PlayerState.ENDED && videoQueue.length > 0) {
                     const nextVideo = videoQueue.shift();
-                    broadcastData({ type: 'NEW_VIDEO', videoId: nextVideo.videoId });
+                    broadcastData({ type: 'NEW_VIDEO', videoId: nextVideo.videoId, autoPlay: true });
                     broadcastData({ type: 'QUEUE_UPDATE', queue: videoQueue });
                     return; // Stop here to avoid sending a final update for the ended video
                 }
@@ -1104,6 +1233,16 @@
     }
 
     // --- UI UPDATES ---
+    function updateVideoTitle() {
+        if (player && typeof player.getVideoData === 'function') {
+            const title = player.getVideoData().title;
+            if (title) {
+                videoTitleElement.textContent = title;
+                videoTitleElement.title = title;
+            }
+        }
+    }
+
     function updateQueueUI() {
         queueList.innerHTML = '';
         if (videoQueue.length === 0) {
