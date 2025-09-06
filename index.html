@@ -457,10 +457,10 @@
          }
          body.theater-mode #theaterModeBtn svg {
             stroke: #fff;
-        }
+         }
          body.theater-mode #theaterModeBtn:hover {
             background-color: rgba(255,255,255,0.2);
-        }
+         }
         body.theater-mode .header, body.theater-mode .sidebar, body.theater-mode .chat-container, body.theater-mode .page-container > .main-content ~ * {
             display: none;
         }
@@ -500,8 +500,8 @@
         </div>
         <div class="user-actions">
             <button id="darkModeToggle" title="Toggle dark mode">
-                <svg class="sun-icon" xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"></circle><line x1="12" y1="1" x2="12" y2="3"></line><line x1="12" y1="21" x2="12" y2="23"></line><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"></line><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"></line><line x1="1" y1="12" x2="3" y2="12"></line><line x1="21" y1="12" x2="23" y2="12"></line><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"></line><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"></line></svg>
-                <svg class="moon-icon" xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"></path></svg>
+                <svg class="sun-icon" xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="white" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"></circle><line x1="12" y1="1" x2="12" y2="3"></line><line x1="12" y1="21" x2="12" y2="23"></line><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"></line><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"></line><line x1="1" y1="12" x2="3" y2="12"></line><line x1="21" y1="12" x2="23" y2="12"></line><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"></line><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"></line></svg>
+                <svg class="moon-icon" xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="white" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"></path></svg>
             </button>
         </div>
     </div>
@@ -552,7 +552,6 @@
     </div>
 </div>
 
-<!-- Firebase SDK -->
 <script src="https://www.gstatic.com/firebasejs/9.6.7/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/9.6.7/firebase-firestore-compat.js"></script>
 
@@ -577,7 +576,7 @@
 
 
     // --- CONFIGURATION ---
-    const YOUTUBE_API_KEY = 'AIzaSyAEQ0bEh9JG0zrMT0JSsK4rTmARY6q8IIc';
+    const YOUTUBE_API_KEY = 'AIzaSyAEQ0bEh9JG0zrMT0JSsK4rTmARY6q8IIc'; // IMPORTANT: Replace with your key
 
     const firebaseConfig = {
         apiKey: "AIzaSyBbQpv91OI3oBQgYVR8o0lCmg2eMu6H5Bo",
@@ -628,6 +627,7 @@
     let hostHeartbeatInterval;
     let lastUserActionTimestamp = 0; // To prevent heartbeat from overriding user actions
     let intentToAutoPlay = false; // Flag to handle autoplay for new videos
+    let localUserList = {}; // For host migration election
 
     // --- INITIALIZATION ---
     setNameBtn.addEventListener('click', () => {
@@ -830,7 +830,22 @@
         const pc = new RTCPeerConnection({ iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] });
         peerConnections[peerId] = pc;
         pc.peerName = peerName;
-        pc.onconnectionstatechange = () => updateConnectionStatus();
+
+        pc.onconnectionstatechange = () => {
+            updateConnectionStatus();
+            // A more robust way to detect a disconnected host.
+            if (peerId === 'host' && !isHost) {
+                const state = pc.connectionState;
+                if (state === 'disconnected' || state === 'failed' || state === 'closed') {
+                    console.warn(`Connection to host lost. State: ${state}`);
+                    // Only trigger migration once.
+                    if (!window.migrationInProgress) {
+                        window.migrationInProgress = true;
+                        handleHostDisconnection();
+                    }
+                }
+            }
+        };
         return pc;
     }
 
@@ -929,11 +944,12 @@
 
     function configureDataChannel(peerId, channel, peerName = '') {
         channel.onopen = () => {
+            window.migrationInProgress = false; // Reset flag on successful connection.
             updateConnectionStatus();
             if (isHost) {
-                const users = { [myId]: {name: myName} };
+                const users = { [myId]: { name: myName } };
                 Object.entries(peerConnections).forEach(([id, pc]) => {
-                    if(pc.peerName) users[id] = { name: pc.peerName };
+                    if (pc.peerName) users[id] = { name: pc.peerName };
                 });
                 broadcastData({ type: 'USER_LIST', users });
 
@@ -955,7 +971,9 @@
             }
         };
         channel.onclose = () => {
-            if (peerId === 'host' && !isHost) {
+            // Trigger host disconnection only if it hasn't started already.
+            if (peerId === 'host' && !isHost && !window.migrationInProgress) {
+                window.migrationInProgress = true;
                 handleHostDisconnection();
                 return;
             }
@@ -1178,6 +1196,10 @@
         connectionStatus.className = 'status connecting';
         if (hostHeartbeatInterval) clearInterval(hostHeartbeatInterval);
 
+        // FIX: Explicitly remove the old host from our state before doing anything else.
+        delete localUserList[currentHostId];
+
+        // Clean up old connection to the departed host
         if (peerConnections['host']) {
             peerConnections['host'].close();
             delete peerConnections['host'];
@@ -1186,29 +1208,47 @@
             delete dataChannels['host'];
         }
 
-        await new Promise(r => setTimeout(r, 1000 + Math.random() * 2000));
+        // --- The Election ---
+        // Get a list of all remaining clients, including myself.
+        const remainingClientIds = Object.keys(localUserList);
+        if (!remainingClientIds.includes(myId)) {
+            remainingClientIds.push(myId);
+        }
+        
+        // Sort the list. The client at the top is the designated successor.
+        remainingClientIds.sort();
+        
+        // Handle case where party is now empty
+        if (remainingClientIds.length === 0) {
+            console.log("Party is empty after host left.");
+            // You might want to reset the UI or show a message here
+            return;
+        }
+        
+        const newHostId = remainingClientIds[0];
+        console.log("Election determined. New host should be:", newHostId);
 
-        try {
-            await db.runTransaction(async (transaction) => {
-                const partyDoc = await transaction.get(partyDocRef);
-                if (!partyDoc.exists) throw new Error("Party document has been deleted.");
+        if (myId === newHostId) {
+            // I am the new host!
+            try {
+                await partyDocRef.update({ hostId: myId });
+                console.log("This client has successfully become the new host!");
+                isHost = true;
+                currentHostId = myId;
+                updateUIForNewHost();
+                listenForGuests(); // Start listening for the other clients to reconnect to me.
+                startHostHeartbeat();
 
-                if (partyDoc.data().hostId === currentHostId) {
-                    transaction.update(partyDocRef, { hostId: myId });
-                } else {
-                    throw new Error("Election already completed.");
-                }
-            });
+                // Announce the updated user list to everyone
+                broadcastData({ type: 'USER_LIST', users: localUserList });
 
-            console.log("This client is now the new host!");
-            isHost = true;
-            currentHostId = myId;
-            updateUIForNewHost();
-            listenForGuests();
-            startHostHeartbeat();
-
-        } catch (error) {
-            console.log(`Could not become host: ${error.message}. Listening for new host to connect to.`);
+            } catch (error) {
+                console.error("Error trying to become host:", error);
+                alert("Could not elect new host. Please refresh the page.");
+            }
+        } else {
+            // I am not the new host. I will wait and listen for the new host to appear.
+            console.log("Waiting for the new host to take over.");
             listenForNewHostAndReconnect();
         }
     }
@@ -1217,10 +1257,12 @@
         const unsubscribe = partyDocRef.onSnapshot(doc => {
             if (!doc.exists) return;
             const newHostId = doc.data().hostId;
+            // Check if the host has changed to someone who is not me and not the old host
             if (newHostId && newHostId !== myId && newHostId !== currentHostId) {
                 console.log(`New host detected (${newHostId}). Reconnecting...`);
-                unsubscribe();
-                joinParty();
+                unsubscribe(); // Stop listening to avoid multiple triggers
+                currentHostId = newHostId;
+                joinParty(); // Re-join the party to connect to the new host
             }
         });
     }
@@ -1228,7 +1270,7 @@
     function updateUIForNewHost() {
         createInviteBtn.classList.remove('hidden');
         createInviteBtn.disabled = true;
-        updateUserList();
+        updateUserList(localUserList);
         updateConnectionStatus();
     }
 
@@ -1296,6 +1338,7 @@
     }
 
     function updateUserList(users = {}) {
+        localUserList = users; // Store the user list for elections.
         userList.innerHTML = '';
         const uniqueUsers = {};
         Object.values(users).forEach(user => {
@@ -1324,4 +1367,3 @@
 
 </body>
 </html>
-
