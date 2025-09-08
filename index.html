@@ -1162,48 +1162,59 @@
     }
 
     async function handleHostDisconnection() {
-        console.log("Host disconnected. Starting election...");
-        connectionStatus.textContent = 'Status: Host disconnected, electing new host...';
-        connectionStatus.className = 'status connecting';
-        if (hostHeartbeatInterval) clearInterval(hostHeartbeatInterval);
-        delete localUserList[currentHostId];
-        if (peerConnections['host']) {
-            peerConnections['host'].close();
-            delete peerConnections['host'];
-        }
-        if (dataChannels['host']) {
-            delete dataChannels['host'];
-        }
-        const remainingClientIds = Object.keys(localUserList);
-        if (!remainingClientIds.includes(myAuthId)) {
-            remainingClientIds.push(myAuthId);
-        }
-        remainingClientIds.sort();
-        if (remainingClientIds.length === 0) {
-            console.log("Party is empty after host left.");
-            return;
-        }
-        const newHostId = remainingClientIds[0];
-        console.log("Election determined. New host should be:", newHostId);
-        if (myAuthId === newHostId) {
-            try {
-                await partyDocRef.update({ hostId: myAuthId });
-                console.log("This client has successfully become the new host!");
-                isHost = true;
-                currentHostId = myAuthId;
-                updateUIForNewHost();
-                listenForGuests();
-                startHostHeartbeat();
-                broadcastData({ type: 'USER_LIST', users: localUserList });
-            } catch (error) {
-                console.error("Error trying to become host:", error);
-                alert("Could not elect new host. Please refresh the page.");
-            }
-        } else {
-            console.log("Waiting for the new host to take over.");
-            listenForNewHostAndReconnect();
-        }
-    }
+		// FIRST, clean up the local state
+		resetPartyState(); 
+
+		console.log("Host disconnected. Starting election...");
+		connectionStatus.textContent = 'Status: Host disconnected, electing new host...';
+		connectionStatus.className = 'status connecting';
+		if (hostHeartbeatInterval) clearInterval(hostHeartbeatInterval);
+
+		// --- The Election ---
+		const remainingClientIds = Object.keys(localUserList);
+		if (!remainingClientIds.includes(myAuthId)) {
+			remainingClientIds.push(myAuthId);
+		}
+		remainingClientIds.sort();
+		
+		if (remainingClientIds.length === 0) {
+			console.log("Party is empty after host left.");
+			return;
+		}
+		
+		const newHostId = remainingClientIds[0];
+		console.log("Election determined. New host should be:", newHostId);
+
+		if (myAuthId === newHostId) {
+			// I am the new host!
+			try {
+				// --- NEW: Clean up old guest documents from Firestore ---
+				const guestsSnapshot = await partyDocRef.collection('guests').get();
+				const batch = db.batch();
+				guestsSnapshot.docs.forEach(doc => batch.delete(doc.ref));
+				await batch.commit();
+				console.log("Cleared old guest list from Firestore.");
+
+				// Now, become the new host
+				await partyDocRef.update({ hostId: myAuthId });
+				console.log("This client has successfully become the new host!");
+				isHost = true;
+				currentHostId = myAuthId;
+				updateUIForNewHost();
+				listenForGuests();
+				startHostHeartbeat();
+				broadcastData({ type: 'USER_LIST', users: localUserList });
+
+			} catch (error) {
+				console.error("Error trying to become host:", error);
+				alert("Could not elect new host. Please refresh the page.");
+			}
+		} else {
+			// I am not the new host. Wait for the new host to appear.
+			console.log("Waiting for the new host to take over.");
+			listenForNewHostAndReconnect();
+		}
+	}
 
     function listenForNewHostAndReconnect() {
         const unsubscribe = partyDocRef.onSnapshot(doc => {
@@ -1298,6 +1309,24 @@
             userList.appendChild(li);
         });
     }
+	
+	function resetPartyState() {
+    console.log("Resetting party state...");
+    // Close all existing peer connections
+    for (const peerId in peerConnections) {
+        if (peerConnections[peerId]) {
+            peerConnections[peerId].close();
+        }
+    }
+    // Clear all connection and channel objects
+    Object.keys(peerConnections).forEach(key => delete peerConnections[key]);
+    Object.keys(dataChannels).forEach(key => delete dataChannels[key]);
+
+    // Reset UI elements
+    userList.innerHTML = '';
+    localUserList = {};
+    window.migrationInProgress = false;
+}
 </script>
 
 </body>
