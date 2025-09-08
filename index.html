@@ -1039,18 +1039,20 @@
                 }
                 break;
             case 'STATE_CHANGE':
-                if (isHost && senderId === 'local' && player.getPlayerState() === data.state) { return; }
-                isSyncingFromHost = true;
-                lastPlayerState = data.state;
-                if (Math.abs(player.getCurrentTime() - data.time) > 3.5) {
-                    player.seekTo(data.time, true);
-                }
-                if (data.state === YT.PlayerState.PLAYING) {
-                    player.playVideo();
-                } else if (data.state === YT.PlayerState.PAUSED || data.state === YT.PlayerState.ENDED) {
-                    player.pauseVideo();
-                }
-                break;
+			isSyncingFromHost = true;
+			lastPlayerState = data.state;
+
+			// --- THIS IS THE NEW, MORE ACCURATE SYNC LOGIC ---
+			if (data.state === YT.PlayerState.PLAYING) {
+				// First, snap to the host's exact time to eliminate drift.
+				player.seekTo(data.time, true);
+				// Then, play the video.
+				player.playVideo();
+			} else if (data.state === YT.PlayerState.PAUSED || data.state === YT.PlayerState.ENDED) {
+				// For pausing, just pause. A time seek isn't as critical.
+				player.pauseVideo();
+			}
+			break;
             case 'TIME_UPDATE':
                 if (!isHost) {
                     if (Date.now() - lastUserActionTimestamp < 3000) break;
