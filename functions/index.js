@@ -1,43 +1,51 @@
 // functions/index.js
 const functions = require("firebase-functions/v2");
 const {onCall} = require("firebase-functions/v2/https");
-const {defineString} = require("firebase-functions/params");
 const axios = require("axios");
 
-const SECRET_API_KEY = defineString("SECRETS_KEY");
-
 exports.searchYoutube = onCall(async (request) => {
-  // Get the search query from the request data
+  // Read the secret key from the environment variables
+  const apiKey = process.env.SECRETS_KEY;
+
+  const videoId = request.data.videoId;
   const searchQuery = request.data.query;
 
-  // Use the secret variable's value.
-  const apiKey = SECRET_API_KEY.value();
-
-  if (!searchQuery) {
-    throw new functions.https.HttpsError(
-        "invalid-argument",
-        "The function must be called with a 'query' argument.",
-    );
-  }
-
-  const YOUTUBE_API_URL = "https://www.googleapis.com/youtube/v3/search";
-
   try {
-    const response = await axios.get(YOUTUBE_API_URL, {
-      params: {
-        part: "snippet",
-        q: searchQuery,
-        key: apiKey,
-        type: "video",
-        maxResults: 10,
-      },
-    });
+    let response;
+    if (videoId) {
+      // If a videoId is provided, use the 'videos.list' endpoint
+      response = await axios.get(
+          "https://www.googleapis.com/youtube/v3/videos", {
+            params: {
+              part: "snippet",
+              id: videoId,
+              key: apiKey,
+            },
+          });
+    } else if (searchQuery) {
+      // Otherwise, use the 'search.list' endpoint
+      response = await axios.get(
+          "https://www.googleapis.com/youtube/v3/search", {
+            params: {
+              part: "snippet",
+              q: searchQuery,
+              key: apiKey,
+              type: "video",
+              maxResults: 10,
+            },
+          });
+    } else {
+      throw new functions.https.HttpsError(
+          "invalid-argument",
+          "Request must contain either a 'query' or a 'videoId'.",
+      );
+    }
     return response.data;
   } catch (error) {
     console.error("Error fetching from YouTube API:", error.message);
     throw new functions.https.HttpsError(
         "internal",
-        "Failed to fetch search results.",
+        "Failed to fetch from YouTube API. Check API key and permissions.",
     );
   }
 });
