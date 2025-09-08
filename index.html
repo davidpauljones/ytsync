@@ -573,7 +573,7 @@
 
     // --- CONFIGURATION ---
     const firebaseConfig = {
-        apiKey: "AIzaSyActKLRV4ldSsS1dKNwkXXdKblnwG0s654", 
+        apiKey: "AIzaSyActKLRV4ldSsS1dKNwkXXdKblnwG0s654",
         authDomain: "partysync-17cd5.firebaseapp.com",
         projectId: "partysync-17cd5",
         storageBucket: "partysync-17cd5.appspot.com",
@@ -843,6 +843,16 @@
         return pc;
     }
 
+    // --- CHAT LOGIC ---
+    const userColors = ['#ff7675', '#74b9ff', '#55efc4', '#ffeaa7', '#a29bfe', '#fd79a8', '#00cec9', '#fab1a0'];
+    const getUserColor = (userName) => {
+        let hash = 0;
+        for (let i = 0; i < userName.length; i++) {
+            hash = userName.charCodeAt(i) + ((hash << 5) - hash);
+        }
+        return userColors[Math.abs(hash % userColors.length)];
+    };
+
     function sendChatMessage() {
         const text = chatInput.value.trim();
         if (text) {
@@ -880,6 +890,7 @@
         chatMessages.scrollTop = chatMessages.scrollHeight;
     }
 
+    // --- DATA CHANNEL & SYNC LOGIC ---
     function handleUserAction(data) {
         if (isHost) {
             broadcastData(data);
@@ -1198,7 +1209,7 @@
         videoQueue.forEach((video, index) => {
             const li = document.createElement('li');
             li.title = "Click to Play Now";
-            li.innerHTML = `<img src="${video.thumbnailUrl}" alt="${video.title}"><div class="video-info"><div class="video-title">${video.title}</div><button class="remove-btn" title="Remove from queue" data-index="${index}">Remove</button></div>`;
+            li.innerHTML = `<img src="${video.thumbnailUrl}" alt="${title}"><div class="video-info"><div class="video-title">${video.title}</div><button class="remove-btn" title="Remove from queue" data-index="${index}">Remove</button></div>`;
             li.addEventListener('click', (e) => {
                 if (e.target.classList.contains('remove-btn')) return;
                 handleUserAction({ type: 'PLAY_FROM_QUEUE', index });
@@ -1252,10 +1263,6 @@
             userList.appendChild(li);
         });
     }
-    
-    // --- UTILITY FUNCTIONS ---
-    // (none needed for this example, but would go here)
-
 </script>
 
 </body>
