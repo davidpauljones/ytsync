@@ -1038,21 +1038,24 @@
                     player.playVideo();
                 }
                 break;
-            case 'STATE_CHANGE':
-			isSyncingFromHost = true;
-			lastPlayerState = data.state;
+            case 'STATE_CHANGE': { // Use brackets to create a new scope
+				isSyncingFromHost = true;
+				lastPlayerState = data.state;
 
-			// --- THIS IS THE NEW, MORE ACCURATE SYNC LOGIC ---
-			if (data.state === YT.PlayerState.PLAYING) {
-				// First, snap to the host's exact time to eliminate drift.
-				player.seekTo(data.time, true);
-				// Then, play the video.
-				player.playVideo();
-			} else if (data.state === YT.PlayerState.PAUSED || data.state === YT.PlayerState.ENDED) {
-				// For pausing, just pause. A time seek isn't as critical.
-				player.pauseVideo();
-			}
-			break;
+				if (data.state === YT.PlayerState.PLAYING) {
+					// --- THIS IS THE NEW THRESHOLD LOGIC ---
+					const timeDifference = Math.abs(player.getCurrentTime() - data.time);
+
+					// Only force a sync if the difference is more than 1.5 seconds
+					if (timeDifference > 1.5) {
+						console.log(`Resyncing: Time difference of ${timeDifference.toFixed(2)}s is too large.`);
+						player.seekTo(data.time, true);
+					}
+					player.playVideo();
+				} else if (data.state === YT.PlayerState.PAUSED || data.state === YT.PlayerState.ENDED) {
+					player.pauseVideo();
+				}
+				break;
             case 'TIME_UPDATE':
                 if (!isHost) {
                     if (Date.now() - lastUserActionTimestamp < 3000) break;
