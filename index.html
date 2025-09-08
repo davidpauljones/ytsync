@@ -409,7 +409,7 @@
             display: flex;
             align-items: center;
             justify-content: center;
-            z-index: 50; /* Keep it above player but below overlay */
+            z-index: 50;
             flex-shrink: 0;
         }
         #theaterModeBtn:hover {
@@ -469,7 +469,6 @@
         body.theater-mode .expand-icon { display: none; }
         body.theater-mode .close-icon { display: block; }
 
-        /* This utility class must be one of the last rules to ensure it overrides other display properties */
         .hidden { display: none !important; }
 
     </style>
@@ -481,7 +480,7 @@
         <h2>Welcome to YouTube Party</h2>
         <p>Please enter your name to join or start a party.</p>
         <input type="text" id="userName" placeholder="Enter your name...">
-        <button id="setNameBtn">Continue</button>
+        <button id="setNameBtn" disabled>Continue</button>
     </div>
 </div>
 
@@ -554,7 +553,8 @@
 <script src="https://www.gstatic.com/firebasejs/9.6.7/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/9.6.7/firebase-firestore-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/9.6.7/firebase-functions-compat.js"></script>
-<script src="https://www.gstatic.com/firebasejs/9.6.7/firebase-auth-compat.js"></script> <script src="https://www.youtube.com/iframe_api"></script>
+<script src="https://www.gstatic.com/firebasejs/9.6.7/firebase-auth-compat.js"></script>
+<script src="https://www.youtube.com/iframe_api"></script>
 
 <script>
     // --- DARK MODE LOGIC ---
@@ -573,7 +573,7 @@
 
     // --- CONFIGURATION ---
     const firebaseConfig = {
-        apiKey: "AIzaSyActKLRV4ldSsS1dKNwkXXdKblnwG0s654", 
+        apiKey: "AIzaSyActKLRV4ldSsS1dKNwkXXdKblnwG0s654",
         authDomain: "partysync-17cd5.firebaseapp.com",
         projectId: "partysync-17cd5",
         storageBucket: "partysync-17cd5.appspot.com",
@@ -609,7 +609,7 @@
     let player;
     let isHost = false;
     let partyId = '';
-    let myAuthId = null; // This will hold our secure user ID
+    let myAuthId = null; 
     let currentHostId = '';
     const peerConnections = {};
     const dataChannels = {};
