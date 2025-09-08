@@ -384,24 +384,38 @@
 	}
 
     function displayResults(videos) {
-        resultsList.innerHTML = videos.length ? '' : '<li>No videos found.</li>';
-        videos.forEach(video => {
-            const videoId = video.id.videoId;
-            const title = video.snippet.title;
-            const thumbnailUrl = video.snippet.thumbnails.default.url;
-            const li = document.createElement('li');
-            li.dataset.videoId = videoId;
-            li.innerHTML = `<img src="${thumbnailUrl}" alt="${video.title}"><div class="video-info"><div class="video-title" title="Play Now">${title}</div><button class="queue-btn">Add</button></div>`;
-            const clickableElements = [li.querySelector('img'), li.querySelector('.video-title')];
-            clickableElements.forEach(el => el.addEventListener('click', () => handleUserAction({ type: 'NEW_VIDEO', videoId: videoId, autoPlay: true })));
-            li.querySelector('.queue-btn').addEventListener('click', (e) => {
-                e.stopPropagation();
-                const videoData = { videoId, title, thumbnailUrl };
-                handleUserAction({ type: 'ADD_TO_QUEUE', video: videoData });
-            });
-            resultsList.appendChild(li);
-        });
-    }
+		resultsList.innerHTML = videos.length ? '' : '<li>No videos found.</li>';
+		videos.forEach(video => {
+			// --- THIS IS THE FIX ---
+			// The video ID is in a different place depending on the API call.
+			// If video.id is an object, it's a search result. If not, it's a direct lookup.
+			const videoId = (typeof video.id === 'object') ? video.id.videoId : video.id;
+
+			const title = video.snippet.title;
+			const thumbnailUrl = video.snippet.thumbnails.default.url;
+
+			const li = document.createElement('li');
+			li.dataset.videoId = videoId;
+			li.innerHTML = `<img src="${thumbnailUrl}" alt="${video.title}"><div class="video-info"><div class="video-title" title="Play Now">${title}</div><button class="queue-btn">Add</button></div>`;
+			
+			const clickableElements = [li.querySelector('img'), li.querySelector('.video-title')];
+			clickableElements.forEach(el => el.addEventListener('click', () => {
+				if (videoId) { // Ensure we have a valid videoId before trying to play
+					handleUserAction({ type: 'NEW_VIDEO', videoId: videoId, autoPlay: true });
+				}
+			}));
+
+			li.querySelector('.queue-btn').addEventListener('click', (e) => {
+				e.stopPropagation();
+				if (videoId) { // Ensure we have a valid videoId before queuing
+					const videoData = { videoId, title, thumbnailUrl };
+					handleUserAction({ type: 'ADD_TO_QUEUE', video: videoData });
+				}
+			});
+			
+			resultsList.appendChild(li);
+		});
+	}
 
     // --- WEBRTC & FIREBASE SIGNALING ---
     createInviteBtn.addEventListener('click', async () => {
