@@ -555,6 +555,7 @@
 <script src="https://www.gstatic.com/firebasejs/9.6.7/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/9.6.7/firebase-firestore-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/9.6.7/firebase-functions-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/9.6.7/firebase-auth-compat.js"></script>
 
 <script>
     // --- DARK MODE LOGIC ---
@@ -591,6 +592,10 @@
     // --- INITIALIZE FIREBASE ---
 	const app = firebase.initializeApp(firebaseConfig); // Save the app instance
 	const db = app.firestore(); // Get firestore from the app instance
+	firebase.auth().signInAnonymously().catch((error) => {
+    console.error("Anonymous sign-in failed:", error);
+    alert("Could not connect to the service. Please refresh the page.");
+	});
 
     // --- DOM ELEMENTS ---
     const userModal = document.getElementById('userModal');
