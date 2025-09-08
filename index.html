@@ -554,6 +554,7 @@
 
 <script src="https://www.gstatic.com/firebasejs/9.6.7/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/9.6.7/firebase-firestore-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/9.6.7/firebase-functions-compat.js"></script>
 
 <script>
     // --- DARK MODE LOGIC ---
@@ -576,7 +577,6 @@
 
 
     // --- CONFIGURATION ---
-    const YOUTUBE_API_KEY = 'AIzaSyAEQ0bEh9JG0zrMT0JSsK4rTmARY6q8IIc'; // IMPORTANT: Replace with your key
 
     const firebaseConfig = {
         apiKey: "AIzaSyBbQpv91OI3oBQgYVR8o0lCmg2eMu6H5Bo",
@@ -589,8 +589,8 @@
     };
 
     // --- INITIALIZE FIREBASE ---
-    firebase.initializeApp(firebaseConfig);
-    const db = firebase.firestore();
+	const app = firebase.initializeApp(firebaseConfig); // Save the app instance
+	const db = app.firestore(); // Get firestore from the app instance
 
     // --- DOM ELEMENTS ---
     const userModal = document.getElementById('userModal');
@@ -688,18 +688,32 @@
 
     // --- YOUTUBE API ---
     window.onYouTubeIframeAPIReady = () => player = new YT.Player('player', { videoId: '', events: { 'onStateChange': onPlayerStateChange } });
-    searchButton.addEventListener('click', searchYouTube);
-    searchInput.addEventListener('keypress', e => e.key === 'Enter' && searchYouTube());
-    async function searchYouTube() {
-        if (YOUTUBE_API_KEY === 'YOUR_YOUTUBE_API_KEY') return alert('Please add your YouTube API key.');
-        const query = searchInput.value; if (!query) return;
-        const url = `https://www.googleapis.com/youtube/v3/search?part=snippet&q=${encodeURIComponent(query)}&key=${YOUTUBE_API_KEY}&type=video&maxResults=10`;
-        try {
-            const res = await fetch(url);
-            const data = await res.json();
-            displayResults(data.items || []);
-        } catch (error) { console.error('Search error:', error); }
-    }
+	searchButton.addEventListener('click', searchYouTube);
+	searchInput.addEventListener('keypress', e => e.key === 'Enter' && searchYouTube());
+
+	// NEW, SECURE VERSION of searchYouTube
+	async function searchYouTube() {
+		const query = searchInput.value; 
+		if (!query) return;
+
+		// Get a reference to our Cloud Function
+		const functions = app.functions('us-central1');
+		const searchYoutubeFunction = firebase.functions().httpsCallable('searchYoutube');
+
+		try {
+			console.log("Calling Cloud Function with query:", query);
+			// Call the function with the search query
+			const result = await searchYoutubeFunction({ query: query });
+			
+			// The results from the function are in result.data
+			displayResults(result.data.items || []);
+			console.log("Received results:", result.data.items);
+
+		} catch (error) {
+			console.error("Error calling Cloud Function:", error);
+			alert("Could not fetch search results. Check the console for details.");
+		}
+	}
     function displayResults(videos) {
         resultsList.innerHTML = videos.length ? '' : '<li>No videos found.</li>';
         videos.forEach(video => {
