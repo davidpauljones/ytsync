@@ -1058,22 +1058,30 @@
 				break;
 			}
             case 'TIME_UPDATE':
-                if (!isHost) {
-                    if (Date.now() - lastUserActionTimestamp < 3000) break;
-                    const localTime = player.getCurrentTime();
-                    const localState = player.getPlayerState();
-                    const timeDifference = Math.abs(localTime - data.time);
-                    if (data.state === YT.PlayerState.PLAYING && (localState !== YT.PlayerState.PLAYING || timeDifference > 3.5)) {
-                        const currentDuration = player.getDuration();
-                        if (officialVideoDuration > 0 && Math.abs(currentDuration - officialVideoDuration) > 2) {
-                            break;
-                        }
-                        isSyncingFromHost = true;
-                        player.seekTo(data.time, true);
-                        player.playVideo();
-                    }
-                }
-                break;
+				if (!isHost) {
+					if (Date.now() - lastUserActionTimestamp < 3000) break;
+
+					const localTime = player.getCurrentTime();
+					const localState = player.getPlayerState();
+					const timeDifference = Math.abs(localTime - data.time);
+					
+					if (data.state === YT.PlayerState.PLAYING && (localState !== YT.PlayerState.PLAYING || timeDifference > 3.5)) {
+						const currentDuration = player.getDuration();
+						if (officialVideoDuration > 0 && Math.abs(currentDuration - officialVideoDuration) > 2) {
+							break;
+						}
+						isSyncingFromHost = true;
+						player.seekTo(data.time, true);
+						player.playVideo();
+					} 
+					// --- ADD THIS NEW BLOCK TO HANDLE PAUSING ---
+					else if (data.state === YT.PlayerState.PAUSED && localState !== YT.PlayerState.PAUSED) {
+						console.log("Heartbeat correcting to PAUSED state.");
+						isSyncingFromHost = true;
+						player.pauseVideo();
+					}
+				}
+				break;
             case 'ADD_TO_QUEUE':
                 if (isHost) {
                     videoQueue.push(data.video);
