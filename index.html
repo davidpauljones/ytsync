@@ -1247,26 +1247,30 @@
     }
 
     function updateQueueUI() {
-        queueList.innerHTML = '';
-        if (videoQueue.length === 0) {
-            queueList.innerHTML = '<li>Queue is empty.</li>';
-            return;
-        }
-        videoQueue.forEach((video, index) => {
-            const li = document.createElement('li');
-            li.title = "Click to Play Now";
-            li.innerHTML = `<img src="${video.thumbnailUrl}" alt="${title}"><div class="video-info"><div class="video-title">${video.title}</div><button class="remove-btn" title="Remove from queue" data-index="${index}">Remove</button></div>`;
-            li.addEventListener('click', (e) => {
-                if (e.target.classList.contains('remove-btn')) return;
-                handleUserAction({ type: 'PLAY_FROM_QUEUE', index });
-            });
-            li.querySelector('.remove-btn').addEventListener('click', (e) => {
-                e.stopPropagation();
-                handleUserAction({ type: 'REMOVE_FROM_QUEUE', index });
-            });
-            queueList.appendChild(li);
-        });
-    }
+		queueList.innerHTML = '';
+		if (videoQueue.length === 0) {
+			queueList.innerHTML = '<li>Queue is empty.</li>';
+			return;
+		}
+		videoQueue.forEach((video, index) => {
+			const li = document.createElement('li');
+			li.title = "Click to Play Now";
+
+			// THIS IS THE CORRECTED LINE: alt="${title}" is now alt="${video.title}"
+			li.innerHTML = `<img src="${video.thumbnailUrl}" alt="${video.title}"><div class="video-info"><div class="video-title">${video.title}</div><button class="remove-btn" title="Remove from queue" data-index="${index}">Remove</button></div>`;
+			
+			li.addEventListener('click', (e) => {
+				if (e.target.classList.contains('remove-btn')) return;
+				handleUserAction({ type: 'PLAY_FROM_QUEUE', index });
+			});
+
+			li.querySelector('.remove-btn').addEventListener('click', (e) => {
+				e.stopPropagation();
+				handleUserAction({ type: 'REMOVE_FROM_QUEUE', index });
+			});
+			queueList.appendChild(li);
+		});
+	}
 
     function updateConnectionStatus() {
         const states = Object.values(peerConnections).map(pc => pc.connectionState);
