@@ -589,8 +589,26 @@
     };
 
     // --- INITIALIZE FIREBASE ---
-	const app = firebase.initializeApp(firebaseConfig); // Save the app instance
-	const db = app.firestore(); // Get firestore from the app instance
+	const app = firebase.initializeApp(firebaseConfig);
+	const db = app.firestore();
+
+	// Listen for authentication state changes
+	firebase.auth().onAuthStateChanged(user => {
+		if (user) {
+			// User is signed in anonymously.
+			myAuthId = user.uid; // <-- Store the secure user ID
+			console.log("User signed in with UID:", myAuthId);
+		} else {
+			// User is signed out.
+			myAuthId = null;
+		}
+	});
+
+	firebase.auth().signInAnonymously().catch((error) => {
+		console.error("Anonymous sign-in failed:", error);
+		alert("Could not connect to the service. Please refresh the page.");
+	});
+	
 
     // --- DOM ELEMENTS ---
     const userModal = document.getElementById('userModal');
@@ -615,7 +633,7 @@
     let player;
     let isHost = false;
     let partyId = '';
-    let myId = crypto.randomUUID();
+    let myAuthId = null;
     let currentHostId = ''; // To track the current host's ID
     const peerConnections = {}; 
     const dataChannels = {};
@@ -750,7 +768,7 @@
     createInviteBtn.addEventListener('click', async () => {
         isHost = true;
         partyId = crypto.randomUUID();
-        currentHostId = myId; // I am the host
+        currentHostId = myAuthId;
         const url = `${window.location.href.split('?')[0]}?party=${partyId}`;
         inviteLinkInput.value = url;
         inviteLinkInput.classList.remove('hidden');
@@ -758,7 +776,7 @@
 
         partyDocRef = db.collection('parties').doc(partyId);
         await partyDocRef.set({ 
-            hostId: myId, 
+            hostId: myAuthId, 
             createdAt: firebase.firestore.FieldValue.serverTimestamp() 
         });
         listenForGuests();
@@ -767,7 +785,7 @@
 
     async function joinParty() {
         partyDocRef = db.collection('parties').doc(partyId);
-        const guestDocRef = partyDocRef.collection('guests').doc(myId);
+        const guestDocRef = partyDocRef.collection('guests').doc(myAuthId);
 
         const pc = createPeerConnection('host');
         dataChannels['host'] = pc.createDataChannel('sync-channel');
