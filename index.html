@@ -758,35 +758,56 @@
     });
 
     async function joinParty() {
-        if (!myAuthId) return alert("Cannot join party, not connected.");
-        partyDocRef = db.collection('parties').doc(partyId);
-        const guestDocRef = partyDocRef.collection('guests').doc(myAuthId);
-        const pc = createPeerConnection('host');
-        dataChannels['host'] = pc.createDataChannel('sync-channel');
-        configureDataChannel('host', dataChannels['host']);
-        const guestCandidatesRef = guestDocRef.collection('guestCandidates');
-        pc.onicecandidate = event => {
-            if (event.candidate) {
-                guestCandidatesRef.add(event.candidate.toJSON());
-            }
-        };
-        const offer = await pc.createOffer();
-        await pc.setLocalDescription(offer);
-        await guestDocRef.set({ offer, name: myName });
-        guestDocRef.onSnapshot(async (snapshot) => {
-            const data = snapshot.data();
-            if (data && data.answer && !pc.currentRemoteDescription) {
-                await pc.setRemoteDescription(new RTCSessionDescription(data.answer));
-            }
-        });
-        guestDocRef.collection('hostCandidates').onSnapshot(snapshot => {
-            snapshot.docChanges().forEach(change => {
-                if (change.type === 'added') {
-                    pc.addIceCandidate(new RTCIceCandidate(change.doc.data()));
-                }
-            });
-        });
-    }
+		if (!myAuthId) return alert("Cannot join party, not connected.");
+		
+		partyDocRef = db.collection('parties').doc(partyId);
+		const guestDocRef = partyDocRef.collection('guests').doc(myAuthId);
+		const pc = createPeerConnection('host');
+
+		// --- FIX STEP 1: Create a buffer to hold candidates that arrive early ---
+		const candidateBuffer = [];
+
+		dataChannels['host'] = pc.createDataChannel('sync-channel');
+		configureDataChannel('host', dataChannels['host']);
+
+		const guestCandidatesRef = guestDocRef.collection('guestCandidates');
+		pc.onicecandidate = event => {
+			if (event.candidate) {
+				guestCandidatesRef.add(event.candidate.toJSON());
+			}
+		};
+
+		const offer = await pc.createOffer();
+		await pc.setLocalDescription(offer);
+		await guestDocRef.set({ offer, name: myName });
+
+		guestDocRef.onSnapshot(async (snapshot) => {
+			const data = snapshot.data();
+			if (data && data.answer && !pc.currentRemoteDescription) {
+				await pc.setRemoteDescription(new RTCSessionDescription(data.answer));
+
+				// --- FIX STEP 3: Process any buffered candidates now that the handshake is complete ---
+				candidateBuffer.forEach(candidate => {
+					pc.addIceCandidate(new RTCIceCandidate(candidate));
+				});
+				candidateBuffer.length = 0; // Clear the buffer
+			}
+		});
+
+		guestDocRef.collection('hostCandidates').onSnapshot(snapshot => {
+			snapshot.docChanges().forEach(change => {
+				if (change.type === 'added') {
+					const candidate = change.doc.data();
+					// --- FIX STEP 2: Instead of adding immediately, add to buffer if remote description isn't set yet ---
+					if (pc.currentRemoteDescription) {
+						pc.addIceCandidate(new RTCIceCandidate(candidate));
+					} else {
+						candidateBuffer.push(candidate);
+					}
+				}
+			});
+		});
+	}
 
     function listenForGuests() {
         partyDocRef.collection('guests').onSnapshot(async snapshot => {
