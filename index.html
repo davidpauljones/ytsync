@@ -560,15 +560,11 @@
 <script>
     // --- DARK MODE LOGIC ---
     const darkModeToggle = document.getElementById('darkModeToggle');
-
-    // Check for saved theme in localStorage and apply it
     if (localStorage.getItem('theme') === 'dark') {
         document.body.classList.add('dark');
     }
-
     darkModeToggle.addEventListener('click', () => {
         document.body.classList.toggle('dark');
-        // Save the user's preference to localStorage
         if (document.body.classList.contains('dark')) {
             localStorage.setItem('theme', 'dark');
         } else {
@@ -578,38 +574,19 @@
 
 
     // --- CONFIGURATION ---
-
     const firebaseConfig = {
-	  apiKey: "AIzaSyActKLRV4ldSsS1dKNwkXXdKblnwG0s654",
-	  authDomain: "partysync-17cd5.firebaseapp.com",
-	  projectId: "partysync-17cd5",
-	  storageBucket: "partysync-17cd5.firebasestorage.app",
-	  messagingSenderId: "294351433712",
-	  appId: "1:294351433712:web:e6b4400614f977d2a6b735",
-	  measurementId: "G-FGNTG43QB9"
-	};
+        apiKey: "YOUR_FIREBASE_PUBLIC_API_KEY", // Replace with your actual Firebase API Key from your Project Settings
+        authDomain: "partysync-17cd5.firebaseapp.com",
+        projectId: "partysync-17cd5",
+        storageBucket: "partysync-17cd5.appspot.com",
+        messagingSenderId: "294351433712",
+        appId: "1:294351433712:web:826470510443b924a6b735",
+        measurementId: "G-PF73SF4VGY"
+    };
 
     // --- INITIALIZE FIREBASE ---
     const app = firebase.initializeApp(firebaseConfig);
     const db = app.firestore();
-
-    // Listen for authentication state changes
-    firebase.auth().onAuthStateChanged(user => {
-        if (user) {
-            // User is signed in anonymously.
-            myAuthId = user.uid; // <-- Store the secure user ID
-            console.log("User signed in with UID:", myAuthId);
-        } else {
-            // User is signed out.
-            myAuthId = null;
-        }
-    });
-
-    firebase.auth().signInAnonymously().catch((error) => {
-        console.error("Anonymous sign-in failed:", error);
-        alert("Could not connect to the service. Please refresh the page.");
-    });
-
 
     // --- DOM ELEMENTS ---
     const userModal = document.getElementById('userModal');
@@ -634,30 +611,53 @@
     let player;
     let isHost = false;
     let partyId = '';
-    let myAuthId = null; // Use this for all user identification
-    let currentHostId = ''; // To track the current host's ID
+    let myAuthId = null; // This will hold our secure user ID
+    let currentHostId = '';
     const peerConnections = {};
     const dataChannels = {};
     let partyDocRef;
     let videoQueue = [];
-    let isSyncingFromHost = false; // Flag to prevent event loops on guest clients
-    let lastPlayerState = -1; // Unstarted
-    let officialVideoDuration = 0; // The host's duration for the current video
+    let isSyncingFromHost = false;
+    let lastPlayerState = -1;
+    let officialVideoDuration = 0;
     let hostHeartbeatInterval;
-    let lastUserActionTimestamp = 0; // To prevent heartbeat from overriding user actions
-    let intentToAutoPlay = false; // Flag to handle autoplay for new videos
-    let localUserList = {}; // For host migration election
+    let lastUserActionTimestamp = 0;
+    let intentToAutoPlay = false;
+    let localUserList = {};
+
+    // --- AUTHENTICATION & APP START ---
+    firebase.auth().onAuthStateChanged(user => {
+        if (user) {
+            // User is signed in anonymously.
+            myAuthId = user.uid;
+            console.log("User signed in with UID:", myAuthId);
+            // Now that we have a user ID, we can enable the main app functionality
+            setNameBtn.disabled = false;
+        } else {
+            myAuthId = null;
+            setNameBtn.disabled = true;
+        }
+    });
+
+    // Disable the button until auth is ready
+    setNameBtn.disabled = true;
+    firebase.auth().signInAnonymously().catch((error) => {
+        console.error("Anonymous sign-in failed:", error);
+        alert("Could not connect to the service. Please refresh the page.");
+    });
 
     // --- INITIALIZATION ---
     setNameBtn.addEventListener('click', () => {
         const name = userNameInput.value.trim();
-        if (name) {
+        if (name && myAuthId) { // Check that we have an auth ID before continuing
             myName = name;
             userModal.classList.add('hidden');
             mainContent.classList.remove('hidden');
             initApp();
-        } else {
+        } else if (!name) {
             alert('Please enter a name.');
+        } else {
+            alert('Could not verify connection. Please refresh the page.');
         }
     });
 
@@ -673,17 +673,13 @@
             startHostHeartbeat();
         }
 
-        // Init Chat
         sendChatBtn.addEventListener('click', sendChatMessage);
         chatInput.addEventListener('keypress', e => {
             if (e.key === 'Enter') sendChatMessage();
         });
 
-        // Graceful disconnect handler
         window.addEventListener('beforeunload', () => {
-            const data = {
-                type: 'USER_LEAVING'
-            };
+            const data = { type: 'USER_LEAVING' };
             Object.values(dataChannels).forEach(channel => {
                 if (channel && channel.readyState === 'open') {
                     channel.send(JSON.stringify(data));
@@ -706,34 +702,25 @@
         }
     });
 
-
     // --- YOUTUBE API ---
     window.onYouTubeIframeAPIReady = () => player = new YT.Player('player', {
         videoId: '',
-        events: {
-            'onStateChange': onPlayerStateChange
-        }
+        events: { 'onStateChange': onPlayerStateChange }
     });
     searchButton.addEventListener('click', searchYouTube);
     searchInput.addEventListener('keypress', e => e.key === 'Enter' && searchYouTube());
 
-    // NEW, SECURE VERSION of searchYouTube
     async function searchYouTube() {
         const query = searchInput.value;
         if (!query) return;
 
-        // **FIXED**: Correctly create the function reference in one line
         const searchYoutubeFunction = app.functions('us-central1').httpsCallable('searchYoutube');
 
         try {
             console.log("Calling Cloud Function with query:", query);
-            const result = await searchYoutubeFunction({
-                query: query
-            });
-
+            const result = await searchYoutubeFunction({ query: query });
             displayResults(result.data.items || []);
             console.log("Received results:", result.data.items);
-
         } catch (error) {
             console.error("Error calling Cloud Function:", error);
             alert("Could not fetch search results. Check the console for details.");
@@ -746,45 +733,23 @@
             const videoId = video.id.videoId;
             const title = video.snippet.title;
             const thumbnailUrl = video.snippet.thumbnails.default.url;
-
             const li = document.createElement('li');
             li.dataset.videoId = videoId;
-            li.innerHTML = `
-                <img src="${thumbnailUrl}" alt="${title}">
-                <div class="video-info">
-                    <div class="video-title" title="Play Now">${title}</div>
-                    <button class="queue-btn">Add</button>
-                </div>
-            `;
-
+            li.innerHTML = `<img src="${thumbnailUrl}" alt="${title}"><div class="video-info"><div class="video-title" title="Play Now">${title}</div><button class="queue-btn">Add</button></div>`;
             const clickableElements = [li.querySelector('img'), li.querySelector('.video-title')];
-            clickableElements.forEach(el => el.addEventListener('click', () => {
-                handleUserAction({
-                    type: 'NEW_VIDEO',
-                    videoId: videoId,
-                    autoPlay: true
-                });
-            }));
-
+            clickableElements.forEach(el => el.addEventListener('click', () => handleUserAction({ type: 'NEW_VIDEO', videoId: videoId, autoPlay: true })));
             li.querySelector('.queue-btn').addEventListener('click', (e) => {
                 e.stopPropagation();
-                const videoData = {
-                    videoId,
-                    title,
-                    thumbnailUrl
-                };
-                handleUserAction({
-                    type: 'ADD_TO_QUEUE',
-                    video: videoData
-                });
+                const videoData = { videoId, title, thumbnailUrl };
+                handleUserAction({ type: 'ADD_TO_QUEUE', video: videoData });
             });
-
             resultsList.appendChild(li);
         });
     }
 
     // --- WEBRTC & FIREBASE SIGNALING ---
     createInviteBtn.addEventListener('click', async () => {
+        if (!myAuthId) return alert("Cannot create party, not connected.");
         isHost = true;
         partyId = crypto.randomUUID();
         currentHostId = myAuthId;
@@ -792,7 +757,6 @@
         inviteLinkInput.value = url;
         inviteLinkInput.classList.remove('hidden');
         createInviteBtn.disabled = true;
-
         partyDocRef = db.collection('parties').doc(partyId);
         await partyDocRef.set({
             hostId: myAuthId,
@@ -803,34 +767,27 @@
     });
 
     async function joinParty() {
+        if (!myAuthId) return alert("Cannot join party, not connected.");
         partyDocRef = db.collection('parties').doc(partyId);
         const guestDocRef = partyDocRef.collection('guests').doc(myAuthId);
-
         const pc = createPeerConnection('host');
         dataChannels['host'] = pc.createDataChannel('sync-channel');
         configureDataChannel('host', dataChannels['host']);
-
         const guestCandidatesRef = guestDocRef.collection('guestCandidates');
         pc.onicecandidate = event => {
             if (event.candidate) {
                 guestCandidatesRef.add(event.candidate.toJSON());
             }
         };
-
         const offer = await pc.createOffer();
         await pc.setLocalDescription(offer);
-        await guestDocRef.set({
-            offer,
-            name: myName
-        });
-
+        await guestDocRef.set({ offer, name: myName });
         guestDocRef.onSnapshot(async (snapshot) => {
             const data = snapshot.data();
             if (data && data.answer && !pc.currentRemoteDescription) {
                 await pc.setRemoteDescription(new RTCSessionDescription(data.answer));
             }
         });
-
         guestDocRef.collection('hostCandidates').onSnapshot(snapshot => {
             snapshot.docChanges().forEach(change => {
                 if (change.type === 'added') {
@@ -846,33 +803,23 @@
                 if (change.type === 'added') {
                     const guestId = change.doc.id;
                     if (peerConnections[guestId]) continue;
-
                     const guestDocRef = change.doc.ref;
-                    const {
-                        offer,
-                        name
-                    } = change.doc.data();
-
+                    const { offer, name } = change.doc.data();
                     const pc = createPeerConnection(guestId, name);
                     pc.ondatachannel = event => {
                         dataChannels[guestId] = event.channel;
                         configureDataChannel(guestId, event.channel, name);
                     };
-
                     const hostCandidatesRef = guestDocRef.collection('hostCandidates');
                     pc.onicecandidate = event => {
                         if (event.candidate) {
                             hostCandidatesRef.add(event.candidate.toJSON());
                         }
                     };
-
                     await pc.setRemoteDescription(new RTCSessionDescription(offer));
                     const answer = await pc.createAnswer();
                     await pc.setLocalDescription(answer);
-                    await guestDocRef.update({
-                        answer
-                    });
-
+                    await guestDocRef.update({ answer });
                     guestDocRef.collection('guestCandidates').onSnapshot(snap => {
                         snap.docChanges().forEach(ch => {
                             if (ch.type === 'added') {
@@ -886,14 +833,9 @@
     }
 
     function createPeerConnection(peerId, peerName) {
-        const pc = new RTCPeerConnection({
-            iceServers: [{
-                urls: 'stun:stun.l.google.com:19302'
-            }]
-        });
+        const pc = new RTCPeerConnection({ iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] });
         peerConnections[peerId] = pc;
         pc.peerName = peerName;
-
         pc.onconnectionstatechange = () => {
             updateConnectionStatus();
             if (peerId === 'host' && !isHost) {
@@ -923,11 +865,7 @@
     function sendChatMessage() {
         const text = chatInput.value.trim();
         if (text) {
-            const messageData = {
-                type: 'CHAT_MESSAGE',
-                text: text,
-                sender: myName
-            };
+            const messageData = { type: 'CHAT_MESSAGE', text: text, sender: myName };
             Object.values(dataChannels).forEach(channel => {
                 if (channel && channel.readyState === 'open') {
                     channel.send(JSON.stringify(messageData));
@@ -938,41 +876,30 @@
         }
     }
 
-    function displayChatMessage({
-        text,
-        sender
-    }) {
+    function displayChatMessage({ text, sender }) {
         const messageEl = document.createElement('div');
         messageEl.classList.add('chat-message');
-
         const avatarEl = document.createElement('div');
         avatarEl.classList.add('avatar');
         avatarEl.textContent = sender.charAt(0).toUpperCase();
         avatarEl.style.backgroundColor = getUserColor(sender);
-
         const messageBodyEl = document.createElement('div');
         messageBodyEl.classList.add('message-body');
-
         const senderEl = document.createElement('div');
         senderEl.classList.add('sender');
         senderEl.textContent = sender;
-
         const textEl = document.createElement('div');
         textEl.classList.add('message-text');
         textEl.textContent = text;
-
         messageBodyEl.appendChild(senderEl);
         messageBodyEl.appendChild(textEl);
-
         messageEl.appendChild(avatarEl);
         messageEl.appendChild(messageBodyEl);
-
         chatMessages.appendChild(messageEl);
         chatMessages.scrollTop = chatMessages.scrollHeight;
     }
 
     // --- DATA CHANNEL & SYNC LOGIC ---
-
     function handleUserAction(data) {
         if (isHost) {
             broadcastData(data);
@@ -983,7 +910,6 @@
 
     function sendRequestToHost(data) {
         if (isHost) return;
-
         if (data.type === 'STATE_CHANGE' && officialVideoDuration > 0) {
             const currentDuration = player.getDuration();
             if (currentDuration === 0 || Math.abs(currentDuration - officialVideoDuration) > 2) {
@@ -991,10 +917,7 @@
                 return;
             }
         }
-
-        const requestData = { ...data,
-            type: `REQUEST_${data.type}`
-        };
+        const requestData = { ...data, type: `REQUEST_${data.type}` };
         const hostChannel = dataChannels['host'];
         if (hostChannel && hostChannel.readyState === 'open') {
             hostChannel.send(JSON.stringify(requestData));
@@ -1003,7 +926,6 @@
 
     function broadcastData(data) {
         handleReceivedData(data, 'local');
-
         Object.entries(dataChannels).forEach(([id, channel]) => {
             if (id !== 'host' && channel && channel.readyState === 'open') {
                 channel.send(JSON.stringify(data));
@@ -1016,42 +938,17 @@
             window.migrationInProgress = false;
             updateConnectionStatus();
             if (isHost) {
-                // **FIXED**: Use myAuthId for the user list
-                const users = {
-                    [myAuthId]: {
-                        name: myName
-                    }
-                };
+                const users = { [myAuthId]: { name: myName } };
                 Object.entries(peerConnections).forEach(([id, pc]) => {
-                    if (pc.peerName) users[id] = {
-                        name: pc.peerName
-                    };
+                    if (pc.peerName) users[id] = { name: pc.peerName };
                 });
-                broadcastData({
-                    type: 'USER_LIST',
-                    users
-                });
-
-                channel.send(JSON.stringify({
-                    type: 'HOST_INFO',
-                    hostId: myAuthId
-                }));
-
+                broadcastData({ type: 'USER_LIST', users });
+                channel.send(JSON.stringify({ type: 'HOST_INFO', hostId: myAuthId }));
                 if (player && player.getPlayerState && player.getPlayerState() !== YT.PlayerState.UNSTARTED && player.getVideoData().video_id) {
-                    const syncData = {
-                        type: 'INITIAL_SYNC',
-                        videoId: player.getVideoData().video_id,
-                        time: player.getCurrentTime(),
-                        state: player.getPlayerState(),
-                        duration: player.getDuration(),
-                        queue: videoQueue
-                    };
+                    const syncData = { type: 'INITIAL_SYNC', videoId: player.getVideoData().video_id, time: player.getCurrentTime(), state: player.getPlayerState(), duration: player.getDuration(), queue: videoQueue };
                     channel.send(JSON.stringify(syncData));
                 } else {
-                    broadcastData({
-                        type: 'QUEUE_UPDATE',
-                        queue: videoQueue
-                    });
+                    broadcastData({ type: 'QUEUE_UPDATE', queue: videoQueue });
                 }
             }
         };
@@ -1061,32 +958,18 @@
                 handleHostDisconnection();
                 return;
             }
-
             if (isHost && partyDocRef) {
-                partyDocRef.collection('guests').doc(peerId).delete().catch(error => {
-                    console.error("Error removing guest document:", error);
-                });
+                partyDocRef.collection('guests').doc(peerId).delete().catch(error => console.error("Error removing guest document:", error));
             }
-
             delete peerConnections[peerId];
             delete dataChannels[peerId];
             updateConnectionStatus();
             if (isHost) {
-                // **FIXED**: Use myAuthId for the user list
-                const users = {
-                    [myAuthId]: {
-                        name: myName
-                    }
-                };
+                const users = { [myAuthId]: { name: myName } };
                 Object.entries(peerConnections).forEach(([id, pc]) => {
-                    if (pc.peerName) users[id] = {
-                        name: pc.peerName
-                    };
+                    if (pc.peerName) users[id] = { name: pc.peerName };
                 });
-                broadcastData({
-                    type: 'USER_LIST',
-                    users
-                });
+                broadcastData({ type: 'USER_LIST', users });
             }
         };
         channel.onmessage = event => handleReceivedData(JSON.parse(event.data), peerId);
@@ -1096,67 +979,39 @@
         if (event.data === YT.PlayerState.PLAYING || event.data === YT.PlayerState.CUED) {
             updateVideoTitle();
         }
-
         if (isHost && intentToAutoPlay && event.data === YT.PlayerState.CUED) {
             intentToAutoPlay = false;
-            handleUserAction({
-                type: 'STATE_CHANGE',
-                state: YT.PlayerState.PLAYING,
-                time: 0
-            });
+            handleUserAction({ type: 'STATE_CHANGE', state: YT.PlayerState.PLAYING, time: 0 });
             return;
         }
-
         if (isSyncingFromHost) {
             isSyncingFromHost = false;
             lastPlayerState = event.data;
             return;
         }
-
-        if (event.data === YT.PlayerState.BUFFERING) {
-            return;
-        }
-
-        if (event.data === lastPlayerState) {
-            return;
-        }
-
+        if (event.data === YT.PlayerState.BUFFERING) { return; }
+        if (event.data === lastPlayerState) { return; }
         lastUserActionTimestamp = Date.now();
-
         const newState = event.data;
         lastPlayerState = newState;
-
         if (isHost && newState === YT.PlayerState.PLAYING) {
             const duration = player.getDuration();
             if (Math.abs(duration - officialVideoDuration) > 1) {
                 officialVideoDuration = duration;
-                broadcastData({
-                    type: 'VIDEO_DURATION',
-                    duration: duration
-                });
+                broadcastData({ type: 'VIDEO_DURATION', duration: duration });
             }
         }
-
-        const actionData = {
-            type: 'STATE_CHANGE',
-            state: newState,
-            time: player.getCurrentTime()
-        };
+        const actionData = { type: 'STATE_CHANGE', state: newState, time: player.getCurrentTime() };
         handleUserAction(actionData);
     }
 
-
     function handleReceivedData(data, senderId) {
         if (!player && data.type.includes('VIDEO')) return;
-
         if (isHost && data.type.startsWith('REQUEST_')) {
-            const commandData = { ...data,
-                type: data.type.replace('REQUEST_', '')
-            };
+            const commandData = { ...data, type: data.type.replace('REQUEST_', '') };
             broadcastData(commandData);
             return;
         }
-
         switch (data.type) {
             case 'HOST_INFO':
                 currentHostId = data.hostId;
@@ -1169,13 +1024,11 @@
                 } else {
                     player.seekTo(data.time, true);
                 }
-
                 setTimeout(() => {
                     isSyncingFromHost = true;
                     if (data.state === YT.PlayerState.PLAYING) player.playVideo();
                     else if (data.state === YT.PlayerState.PAUSED) player.pauseVideo();
                 }, 1000);
-
                 videoQueue = data.queue;
                 updateQueueUI();
                 break;
@@ -1195,17 +1048,12 @@
                 }
                 break;
             case 'STATE_CHANGE':
-                if (isHost && senderId === 'local' && player.getPlayerState() === data.state) {
-                    return;
-                }
-
+                if (isHost && senderId === 'local' && player.getPlayerState() === data.state) { return; }
                 isSyncingFromHost = true;
                 lastPlayerState = data.state;
-
                 if (Math.abs(player.getCurrentTime() - data.time) > 3.5) {
                     player.seekTo(data.time, true);
                 }
-
                 if (data.state === YT.PlayerState.PLAYING) {
                     player.playVideo();
                 } else if (data.state === YT.PlayerState.PAUSED || data.state === YT.PlayerState.ENDED) {
@@ -1215,11 +1063,9 @@
             case 'TIME_UPDATE':
                 if (!isHost) {
                     if (Date.now() - lastUserActionTimestamp < 3000) break;
-
                     const localTime = player.getCurrentTime();
                     const localState = player.getPlayerState();
                     const timeDifference = Math.abs(localTime - data.time);
-
                     if (data.state === YT.PlayerState.PLAYING && (localState !== YT.PlayerState.PLAYING || timeDifference > 3.5)) {
                         const currentDuration = player.getDuration();
                         if (officialVideoDuration > 0 && Math.abs(currentDuration - officialVideoDuration) > 2) {
@@ -1234,33 +1080,20 @@
             case 'ADD_TO_QUEUE':
                 if (isHost) {
                     videoQueue.push(data.video);
-                    broadcastData({
-                        type: 'QUEUE_UPDATE',
-                        queue: videoQueue
-                    });
+                    broadcastData({ type: 'QUEUE_UPDATE', queue: videoQueue });
                 }
                 break;
             case 'PLAY_FROM_QUEUE':
                 if (isHost && videoQueue[data.index]) {
                     const videoToPlay = videoQueue.splice(data.index, 1)[0];
-                    broadcastData({
-                        type: 'NEW_VIDEO',
-                        videoId: videoToPlay.videoId,
-                        autoPlay: true
-                    });
-                    broadcastData({
-                        type: 'QUEUE_UPDATE',
-                        queue: videoQueue
-                    });
+                    broadcastData({ type: 'NEW_VIDEO', videoId: videoToPlay.videoId, autoPlay: true });
+                    broadcastData({ type: 'QUEUE_UPDATE', queue: videoQueue });
                 }
                 break;
             case 'REMOVE_FROM_QUEUE':
                 if (isHost) {
                     videoQueue.splice(data.index, 1);
-                    broadcastData({
-                        type: 'QUEUE_UPDATE',
-                        queue: videoQueue
-                    });
+                    broadcastData({ type: 'QUEUE_UPDATE', queue: videoQueue });
                 }
                 break;
             case 'USER_LEAVING':
@@ -1287,26 +1120,13 @@
         hostHeartbeatInterval = setInterval(() => {
             if (isHost && player && typeof player.getCurrentTime === 'function') {
                 const currentState = player.getPlayerState();
-
                 if (currentState === YT.PlayerState.ENDED && videoQueue.length > 0) {
                     const nextVideo = videoQueue.shift();
-                    broadcastData({
-                        type: 'NEW_VIDEO',
-                        videoId: nextVideo.videoId,
-                        autoPlay: true
-                    });
-                    broadcastData({
-                        type: 'QUEUE_UPDATE',
-                        queue: videoQueue
-                    });
+                    broadcastData({ type: 'NEW_VIDEO', videoId: nextVideo.videoId, autoPlay: true });
+                    broadcastData({ type: 'QUEUE_UPDATE', queue: videoQueue });
                     return;
                 }
-
-                const data = {
-                    type: 'TIME_UPDATE',
-                    time: player.getCurrentTime(),
-                    state: currentState
-                };
+                const data = { type: 'TIME_UPDATE', time: player.getCurrentTime(), state: currentState };
                 Object.entries(dataChannels).forEach(([id, channel]) => {
                     if (id !== 'host' && channel && channel.readyState === 'open') {
                         channel.send(JSON.stringify(data));
@@ -1321,9 +1141,7 @@
         connectionStatus.textContent = 'Status: Host disconnected, electing new host...';
         connectionStatus.className = 'status connecting';
         if (hostHeartbeatInterval) clearInterval(hostHeartbeatInterval);
-
         delete localUserList[currentHostId];
-
         if (peerConnections['host']) {
             peerConnections['host'].close();
             delete peerConnections['host'];
@@ -1331,39 +1149,27 @@
         if (dataChannels['host']) {
             delete dataChannels['host'];
         }
-
-        // **FIXED**: Use myAuthId for election
         const remainingClientIds = Object.keys(localUserList);
         if (!remainingClientIds.includes(myAuthId)) {
             remainingClientIds.push(myAuthId);
         }
-
         remainingClientIds.sort();
-
         if (remainingClientIds.length === 0) {
             console.log("Party is empty after host left.");
             return;
         }
-
         const newHostId = remainingClientIds[0];
         console.log("Election determined. New host should be:", newHostId);
-
         if (myAuthId === newHostId) {
             try {
-                await partyDocRef.update({
-                    hostId: myAuthId
-                });
+                await partyDocRef.update({ hostId: myAuthId });
                 console.log("This client has successfully become the new host!");
                 isHost = true;
                 currentHostId = myAuthId;
                 updateUIForNewHost();
                 listenForGuests();
                 startHostHeartbeat();
-                broadcastData({
-                    type: 'USER_LIST',
-                    users: localUserList
-                });
-
+                broadcastData({ type: 'USER_LIST', users: localUserList });
             } catch (error) {
                 console.error("Error trying to become host:", error);
                 alert("Could not elect new host. Please refresh the page.");
@@ -1378,7 +1184,6 @@
         const unsubscribe = partyDocRef.onSnapshot(doc => {
             if (!doc.exists) return;
             const newHostId = doc.data().hostId;
-            // **FIXED**: Use myAuthId in check
             if (newHostId && newHostId !== myAuthId && newHostId !== currentHostId) {
                 console.log(`New host detected (${newHostId}). Reconnecting...`);
                 unsubscribe();
@@ -1388,6 +1193,7 @@
         });
     }
 
+    // --- UI UPDATES ---
     function updateUIForNewHost() {
         createInviteBtn.classList.remove('hidden');
         createInviteBtn.disabled = true;
@@ -1395,7 +1201,6 @@
         updateConnectionStatus();
     }
 
-    // --- UI UPDATES ---
     function updateVideoTitle() {
         if (player && typeof player.getVideoData === 'function') {
             const title = player.getVideoData().title;
@@ -1415,28 +1220,14 @@
         videoQueue.forEach((video, index) => {
             const li = document.createElement('li');
             li.title = "Click to Play Now";
-            li.innerHTML = `
-                <img src="${video.thumbnailUrl}" alt="${video.title}">
-                <div class="video-info">
-                    <div class="video-title">${video.title}</div>
-                    <button class="remove-btn" title="Remove from queue" data-index="${index}">Remove</button>
-                </div>
-            `;
-
+            li.innerHTML = `<img src="${video.thumbnailUrl}" alt="${video.title}"><div class="video-info"><div class="video-title">${video.title}</div><button class="remove-btn" title="Remove from queue" data-index="${index}">Remove</button></div>`;
             li.addEventListener('click', (e) => {
                 if (e.target.classList.contains('remove-btn')) return;
-                handleUserAction({
-                    type: 'PLAY_FROM_QUEUE',
-                    index
-                });
+                handleUserAction({ type: 'PLAY_FROM_QUEUE', index });
             });
-
             li.querySelector('.remove-btn').addEventListener('click', (e) => {
                 e.stopPropagation();
-                handleUserAction({
-                    type: 'REMOVE_FROM_QUEUE',
-                    index
-                });
+                handleUserAction({ type: 'REMOVE_FROM_QUEUE', index });
             });
             queueList.appendChild(li);
         });
@@ -1446,14 +1237,11 @@
         const states = Object.values(peerConnections).map(pc => pc.connectionState);
         let statusText = 'Disconnected';
         let statusClass = 'disconnected';
-
         const connectedCount = states.filter(s => s === 'connected').length;
-
         if (isHost && states.length === 0) {
             statusText = 'Waiting for guests...';
             statusClass = 'connecting';
         } else if (connectedCount > 0 || (!isHost && peerConnections['host'] && peerConnections['host'].connectionState === 'connected')) {
-            const total = isHost ? connectedCount : 1 + connectedCount;
             statusText = `Connected to host`;
             statusClass = 'connected';
         } else if (!isHost && states.some(s => ['connecting', 'new', 'checking'].includes(s))) {
@@ -1473,13 +1261,9 @@
                 uniqueUsers[user.name] = user;
             }
         });
-
         if (!uniqueUsers[myName]) {
-            uniqueUsers[myName] = {
-                name: myName
-            };
+            uniqueUsers[myName] = { name: myName };
         }
-
         Object.values(uniqueUsers).forEach(user => {
             const li = document.createElement('li');
             let suffix = '';
