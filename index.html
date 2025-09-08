@@ -555,6 +555,7 @@
 <script src="https://www.gstatic.com/firebasejs/9.6.7/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/9.6.7/firebase-firestore-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/9.6.7/firebase-functions-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/9.6.7/firebase-auth-compat.js"></script>
 
 <script>
     // --- DARK MODE LOGIC ---
@@ -579,7 +580,7 @@
     // --- CONFIGURATION ---
 
     const firebaseConfig = {
-        apiKey: "AIzaSyBbQpv91OI3oBQgYVR8o0lCmg2eMu6H5Bo",
+        apiKey: "AIzaSyBbQpv91OI3oBQgYVR8o0lCmg2eMu6H5Bo", // This should be your public Firebase API Key
         authDomain: "partysync-17cd5.firebaseapp.com",
         projectId: "partysync-17cd5",
         storageBucket: "partysync-17cd5.appspot.com",
@@ -589,26 +590,26 @@
     };
 
     // --- INITIALIZE FIREBASE ---
-	const app = firebase.initializeApp(firebaseConfig);
-	const db = app.firestore();
+    const app = firebase.initializeApp(firebaseConfig);
+    const db = app.firestore();
 
-	// Listen for authentication state changes
-	firebase.auth().onAuthStateChanged(user => {
-		if (user) {
-			// User is signed in anonymously.
-			myAuthId = user.uid; // <-- Store the secure user ID
-			console.log("User signed in with UID:", myAuthId);
-		} else {
-			// User is signed out.
-			myAuthId = null;
-		}
-	});
+    // Listen for authentication state changes
+    firebase.auth().onAuthStateChanged(user => {
+        if (user) {
+            // User is signed in anonymously.
+            myAuthId = user.uid; // <-- Store the secure user ID
+            console.log("User signed in with UID:", myAuthId);
+        } else {
+            // User is signed out.
+            myAuthId = null;
+        }
+    });
 
-	firebase.auth().signInAnonymously().catch((error) => {
-		console.error("Anonymous sign-in failed:", error);
-		alert("Could not connect to the service. Please refresh the page.");
-	});
-	
+    firebase.auth().signInAnonymously().catch((error) => {
+        console.error("Anonymous sign-in failed:", error);
+        alert("Could not connect to the service. Please refresh the page.");
+    });
+
 
     // --- DOM ELEMENTS ---
     const userModal = document.getElementById('userModal');
@@ -633,9 +634,9 @@
     let player;
     let isHost = false;
     let partyId = '';
-    let myAuthId = null;
+    let myAuthId = null; // Use this for all user identification
     let currentHostId = ''; // To track the current host's ID
-    const peerConnections = {}; 
+    const peerConnections = {};
     const dataChannels = {};
     let partyDocRef;
     let videoQueue = [];
@@ -659,7 +660,7 @@
             alert('Please enter a name.');
         }
     });
-    
+
     function initApp() {
         const urlParams = new URLSearchParams(window.location.search);
         partyId = urlParams.get('party');
@@ -677,10 +678,12 @@
         chatInput.addEventListener('keypress', e => {
             if (e.key === 'Enter') sendChatMessage();
         });
-        
+
         // Graceful disconnect handler
         window.addEventListener('beforeunload', () => {
-            const data = { type: 'USER_LEAVING' };
+            const data = {
+                type: 'USER_LEAVING'
+            };
             Object.values(dataChannels).forEach(channel => {
                 if (channel && channel.readyState === 'open') {
                     channel.send(JSON.stringify(data));
@@ -705,33 +708,38 @@
 
 
     // --- YOUTUBE API ---
-    window.onYouTubeIframeAPIReady = () => player = new YT.Player('player', { videoId: '', events: { 'onStateChange': onPlayerStateChange } });
-	searchButton.addEventListener('click', searchYouTube);
-	searchInput.addEventListener('keypress', e => e.key === 'Enter' && searchYouTube());
+    window.onYouTubeIframeAPIReady = () => player = new YT.Player('player', {
+        videoId: '',
+        events: {
+            'onStateChange': onPlayerStateChange
+        }
+    });
+    searchButton.addEventListener('click', searchYouTube);
+    searchInput.addEventListener('keypress', e => e.key === 'Enter' && searchYouTube());
 
-	// NEW, SECURE VERSION of searchYouTube
-	async function searchYouTube() {
-		const query = searchInput.value; 
-		if (!query) return;
+    // NEW, SECURE VERSION of searchYouTube
+    async function searchYouTube() {
+        const query = searchInput.value;
+        if (!query) return;
 
-		// Get a reference to our Cloud Function
-		const functions = app.functions('us-central1');
-		const searchYoutubeFunction = firebase.functions().httpsCallable('searchYoutube');
+        // **FIXED**: Correctly create the function reference in one line
+        const searchYoutubeFunction = app.functions('us-central1').httpsCallable('searchYoutube');
 
-		try {
-			console.log("Calling Cloud Function with query:", query);
-			// Call the function with the search query
-			const result = await searchYoutubeFunction({ query: query });
-			
-			// The results from the function are in result.data
-			displayResults(result.data.items || []);
-			console.log("Received results:", result.data.items);
+        try {
+            console.log("Calling Cloud Function with query:", query);
+            const result = await searchYoutubeFunction({
+                query: query
+            });
 
-		} catch (error) {
-			console.error("Error calling Cloud Function:", error);
-			alert("Could not fetch search results. Check the console for details.");
-		}
-	}
+            displayResults(result.data.items || []);
+            console.log("Received results:", result.data.items);
+
+        } catch (error) {
+            console.error("Error calling Cloud Function:", error);
+            alert("Could not fetch search results. Check the console for details.");
+        }
+    }
+
     function displayResults(videos) {
         resultsList.innerHTML = videos.length ? '' : '<li>No videos found.</li>';
         videos.forEach(video => {
@@ -748,16 +756,27 @@
                     <button class="queue-btn">Add</button>
                 </div>
             `;
-            
+
             const clickableElements = [li.querySelector('img'), li.querySelector('.video-title')];
             clickableElements.forEach(el => el.addEventListener('click', () => {
-                handleUserAction({ type: 'NEW_VIDEO', videoId: videoId, autoPlay: true });
+                handleUserAction({
+                    type: 'NEW_VIDEO',
+                    videoId: videoId,
+                    autoPlay: true
+                });
             }));
 
             li.querySelector('.queue-btn').addEventListener('click', (e) => {
-                e.stopPropagation(); 
-                const videoData = { videoId, title, thumbnailUrl };
-                handleUserAction({ type: 'ADD_TO_QUEUE', video: videoData });
+                e.stopPropagation();
+                const videoData = {
+                    videoId,
+                    title,
+                    thumbnailUrl
+                };
+                handleUserAction({
+                    type: 'ADD_TO_QUEUE',
+                    video: videoData
+                });
             });
 
             resultsList.appendChild(li);
@@ -775,9 +794,9 @@
         createInviteBtn.disabled = true;
 
         partyDocRef = db.collection('parties').doc(partyId);
-        await partyDocRef.set({ 
-            hostId: myAuthId, 
-            createdAt: firebase.firestore.FieldValue.serverTimestamp() 
+        await partyDocRef.set({
+            hostId: myAuthId,
+            createdAt: firebase.firestore.FieldValue.serverTimestamp()
         });
         listenForGuests();
         startHostHeartbeat();
@@ -800,7 +819,10 @@
 
         const offer = await pc.createOffer();
         await pc.setLocalDescription(offer);
-        await guestDocRef.set({ offer, name: myName });
+        await guestDocRef.set({
+            offer,
+            name: myName
+        });
 
         guestDocRef.onSnapshot(async (snapshot) => {
             const data = snapshot.data();
@@ -823,11 +845,14 @@
             for (const change of snapshot.docChanges()) {
                 if (change.type === 'added') {
                     const guestId = change.doc.id;
-                    if(peerConnections[guestId]) continue;
+                    if (peerConnections[guestId]) continue;
 
                     const guestDocRef = change.doc.ref;
-                    const { offer, name } = change.doc.data();
-                    
+                    const {
+                        offer,
+                        name
+                    } = change.doc.data();
+
                     const pc = createPeerConnection(guestId, name);
                     pc.ondatachannel = event => {
                         dataChannels[guestId] = event.channel;
@@ -844,7 +869,9 @@
                     await pc.setRemoteDescription(new RTCSessionDescription(offer));
                     const answer = await pc.createAnswer();
                     await pc.setLocalDescription(answer);
-                    await guestDocRef.update({ answer });
+                    await guestDocRef.update({
+                        answer
+                    });
 
                     guestDocRef.collection('guestCandidates').onSnapshot(snap => {
                         snap.docChanges().forEach(ch => {
@@ -857,20 +884,22 @@
             }
         });
     }
-    
+
     function createPeerConnection(peerId, peerName) {
-        const pc = new RTCPeerConnection({ iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] });
+        const pc = new RTCPeerConnection({
+            iceServers: [{
+                urls: 'stun:stun.l.google.com:19302'
+            }]
+        });
         peerConnections[peerId] = pc;
         pc.peerName = peerName;
 
         pc.onconnectionstatechange = () => {
             updateConnectionStatus();
-            // A more robust way to detect a disconnected host.
             if (peerId === 'host' && !isHost) {
                 const state = pc.connectionState;
                 if (state === 'disconnected' || state === 'failed' || state === 'closed') {
                     console.warn(`Connection to host lost. State: ${state}`);
-                    // Only trigger migration once.
                     if (!window.migrationInProgress) {
                         window.migrationInProgress = true;
                         handleHostDisconnection();
@@ -894,19 +923,25 @@
     function sendChatMessage() {
         const text = chatInput.value.trim();
         if (text) {
-            const messageData = { type: 'CHAT_MESSAGE', text: text, sender: myName };
-            // Chat messages are sent directly, not as requests
+            const messageData = {
+                type: 'CHAT_MESSAGE',
+                text: text,
+                sender: myName
+            };
             Object.values(dataChannels).forEach(channel => {
                 if (channel && channel.readyState === 'open') {
                     channel.send(JSON.stringify(messageData));
                 }
             });
-            displayChatMessage(messageData); // Display local message immediately
+            displayChatMessage(messageData);
             chatInput.value = '';
         }
     }
 
-    function displayChatMessage({ text, sender }) {
+    function displayChatMessage({
+        text,
+        sender
+    }) {
         const messageEl = document.createElement('div');
         messageEl.classList.add('chat-message');
 
@@ -917,7 +952,7 @@
 
         const messageBodyEl = document.createElement('div');
         messageBodyEl.classList.add('message-body');
-        
+
         const senderEl = document.createElement('div');
         senderEl.classList.add('sender');
         senderEl.textContent = sender;
@@ -925,17 +960,17 @@
         const textEl = document.createElement('div');
         textEl.classList.add('message-text');
         textEl.textContent = text;
-        
+
         messageBodyEl.appendChild(senderEl);
         messageBodyEl.appendChild(textEl);
 
         messageEl.appendChild(avatarEl);
         messageEl.appendChild(messageBodyEl);
-        
+
         chatMessages.appendChild(messageEl);
         chatMessages.scrollTop = chatMessages.scrollHeight;
     }
-    
+
     // --- DATA CHANNEL & SYNC LOGIC ---
 
     function handleUserAction(data) {
@@ -957,16 +992,18 @@
             }
         }
 
-        const requestData = { ...data, type: `REQUEST_${data.type}` };
+        const requestData = { ...data,
+            type: `REQUEST_${data.type}`
+        };
         const hostChannel = dataChannels['host'];
         if (hostChannel && hostChannel.readyState === 'open') {
             hostChannel.send(JSON.stringify(requestData));
         }
     }
-    
+
     function broadcastData(data) {
         handleReceivedData(data, 'local');
-        
+
         Object.entries(dataChannels).forEach(([id, channel]) => {
             if (id !== 'host' && channel && channel.readyState === 'open') {
                 channel.send(JSON.stringify(data));
@@ -976,16 +1013,29 @@
 
     function configureDataChannel(peerId, channel, peerName = '') {
         channel.onopen = () => {
-            window.migrationInProgress = false; // Reset flag on successful connection.
+            window.migrationInProgress = false;
             updateConnectionStatus();
             if (isHost) {
-                const users = { [myId]: { name: myName } };
+                // **FIXED**: Use myAuthId for the user list
+                const users = {
+                    [myAuthId]: {
+                        name: myName
+                    }
+                };
                 Object.entries(peerConnections).forEach(([id, pc]) => {
-                    if (pc.peerName) users[id] = { name: pc.peerName };
+                    if (pc.peerName) users[id] = {
+                        name: pc.peerName
+                    };
                 });
-                broadcastData({ type: 'USER_LIST', users });
+                broadcastData({
+                    type: 'USER_LIST',
+                    users
+                });
 
-                channel.send(JSON.stringify({ type: 'HOST_INFO', hostId: myId }));
+                channel.send(JSON.stringify({
+                    type: 'HOST_INFO',
+                    hostId: myAuthId
+                }));
 
                 if (player && player.getPlayerState && player.getPlayerState() !== YT.PlayerState.UNSTARTED && player.getVideoData().video_id) {
                     const syncData = {
@@ -998,18 +1048,20 @@
                     };
                     channel.send(JSON.stringify(syncData));
                 } else {
-                    broadcastData({ type: 'QUEUE_UPDATE', queue: videoQueue });
+                    broadcastData({
+                        type: 'QUEUE_UPDATE',
+                        queue: videoQueue
+                    });
                 }
             }
         };
         channel.onclose = () => {
-            // Trigger host disconnection only if it hasn't started already.
             if (peerId === 'host' && !isHost && !window.migrationInProgress) {
                 window.migrationInProgress = true;
                 handleHostDisconnection();
                 return;
             }
-            
+
             if (isHost && partyDocRef) {
                 partyDocRef.collection('guests').doc(peerId).delete().catch(error => {
                     console.error("Error removing guest document:", error);
@@ -1020,55 +1072,76 @@
             delete dataChannels[peerId];
             updateConnectionStatus();
             if (isHost) {
-                const users = { [myId]: {name: myName} };
+                // **FIXED**: Use myAuthId for the user list
+                const users = {
+                    [myAuthId]: {
+                        name: myName
+                    }
+                };
                 Object.entries(peerConnections).forEach(([id, pc]) => {
-                    if(pc.peerName) users[id] = { name: pc.peerName };
+                    if (pc.peerName) users[id] = {
+                        name: pc.peerName
+                    };
                 });
-                broadcastData({ type: 'USER_LIST', users });
+                broadcastData({
+                    type: 'USER_LIST',
+                    users
+                });
             }
         };
         channel.onmessage = event => handleReceivedData(JSON.parse(event.data), peerId);
     }
-    
+
     function onPlayerStateChange(event) {
         if (event.data === YT.PlayerState.PLAYING || event.data === YT.PlayerState.CUED) {
             updateVideoTitle();
         }
 
         if (isHost && intentToAutoPlay && event.data === YT.PlayerState.CUED) {
-            intentToAutoPlay = false; // Consume the intent
-            handleUserAction({ type: 'STATE_CHANGE', state: YT.PlayerState.PLAYING, time: 0 });
-            return; 
+            intentToAutoPlay = false;
+            handleUserAction({
+                type: 'STATE_CHANGE',
+                state: YT.PlayerState.PLAYING,
+                time: 0
+            });
+            return;
         }
-        
+
         if (isSyncingFromHost) {
             isSyncingFromHost = false;
             lastPlayerState = event.data;
             return;
         }
-    
+
         if (event.data === YT.PlayerState.BUFFERING) {
             return;
         }
-    
+
         if (event.data === lastPlayerState) {
             return;
         }
-        
+
         lastUserActionTimestamp = Date.now();
-    
+
         const newState = event.data;
         lastPlayerState = newState;
-        
+
         if (isHost && newState === YT.PlayerState.PLAYING) {
             const duration = player.getDuration();
             if (Math.abs(duration - officialVideoDuration) > 1) {
                 officialVideoDuration = duration;
-                broadcastData({ type: 'VIDEO_DURATION', duration: duration });
+                broadcastData({
+                    type: 'VIDEO_DURATION',
+                    duration: duration
+                });
             }
         }
-        
-        const actionData = { type: 'STATE_CHANGE', state: newState, time: player.getCurrentTime() };
+
+        const actionData = {
+            type: 'STATE_CHANGE',
+            state: newState,
+            time: player.getCurrentTime()
+        };
         handleUserAction(actionData);
     }
 
@@ -1077,11 +1150,13 @@
         if (!player && data.type.includes('VIDEO')) return;
 
         if (isHost && data.type.startsWith('REQUEST_')) {
-            const commandData = { ...data, type: data.type.replace('REQUEST_', '') };
+            const commandData = { ...data,
+                type: data.type.replace('REQUEST_', '')
+            };
             broadcastData(commandData);
             return;
         }
-        
+
         switch (data.type) {
             case 'HOST_INFO':
                 currentHostId = data.hostId;
@@ -1094,7 +1169,7 @@
                 } else {
                     player.seekTo(data.time, true);
                 }
-                
+
                 setTimeout(() => {
                     isSyncingFromHost = true;
                     if (data.state === YT.PlayerState.PLAYING) player.playVideo();
@@ -1115,7 +1190,7 @@
                         intentToAutoPlay = true;
                     }
                     player.loadVideoById(data.videoId);
-                } else if (data.autoPlay) { 
+                } else if (data.autoPlay) {
                     player.playVideo();
                 }
                 break;
@@ -1144,11 +1219,11 @@
                     const localTime = player.getCurrentTime();
                     const localState = player.getPlayerState();
                     const timeDifference = Math.abs(localTime - data.time);
-                    
+
                     if (data.state === YT.PlayerState.PLAYING && (localState !== YT.PlayerState.PLAYING || timeDifference > 3.5)) {
                         const currentDuration = player.getDuration();
                         if (officialVideoDuration > 0 && Math.abs(currentDuration - officialVideoDuration) > 2) {
-                            break; 
+                            break;
                         }
                         isSyncingFromHost = true;
                         player.seekTo(data.time, true);
@@ -1159,20 +1234,33 @@
             case 'ADD_TO_QUEUE':
                 if (isHost) {
                     videoQueue.push(data.video);
-                    broadcastData({ type: 'QUEUE_UPDATE', queue: videoQueue });
+                    broadcastData({
+                        type: 'QUEUE_UPDATE',
+                        queue: videoQueue
+                    });
                 }
                 break;
             case 'PLAY_FROM_QUEUE':
                 if (isHost && videoQueue[data.index]) {
                     const videoToPlay = videoQueue.splice(data.index, 1)[0];
-                    broadcastData({ type: 'NEW_VIDEO', videoId: videoToPlay.videoId, autoPlay: true });
-                    broadcastData({ type: 'QUEUE_UPDATE', queue: videoQueue });
+                    broadcastData({
+                        type: 'NEW_VIDEO',
+                        videoId: videoToPlay.videoId,
+                        autoPlay: true
+                    });
+                    broadcastData({
+                        type: 'QUEUE_UPDATE',
+                        queue: videoQueue
+                    });
                 }
                 break;
             case 'REMOVE_FROM_QUEUE':
                 if (isHost) {
                     videoQueue.splice(data.index, 1);
-                    broadcastData({ type: 'QUEUE_UPDATE', queue: videoQueue });
+                    broadcastData({
+                        type: 'QUEUE_UPDATE',
+                        queue: videoQueue
+                    });
                 }
                 break;
             case 'USER_LEAVING':
@@ -1192,7 +1280,7 @@
                 break;
         }
     }
-    
+
     // --- HOST MIGRATION & HEARTBEAT ---
     function startHostHeartbeat() {
         if (hostHeartbeatInterval) clearInterval(hostHeartbeatInterval);
@@ -1200,12 +1288,18 @@
             if (isHost && player && typeof player.getCurrentTime === 'function') {
                 const currentState = player.getPlayerState();
 
-                // Check for ended video to reliably autoplay next in queue
                 if (currentState === YT.PlayerState.ENDED && videoQueue.length > 0) {
                     const nextVideo = videoQueue.shift();
-                    broadcastData({ type: 'NEW_VIDEO', videoId: nextVideo.videoId, autoPlay: true });
-                    broadcastData({ type: 'QUEUE_UPDATE', queue: videoQueue });
-                    return; // Stop here to avoid sending a final update for the ended video
+                    broadcastData({
+                        type: 'NEW_VIDEO',
+                        videoId: nextVideo.videoId,
+                        autoPlay: true
+                    });
+                    broadcastData({
+                        type: 'QUEUE_UPDATE',
+                        queue: videoQueue
+                    });
+                    return;
                 }
 
                 const data = {
@@ -1219,7 +1313,7 @@
                     }
                 });
             }
-        }, 1500); // Check state more frequently for responsiveness
+        }, 1500);
     }
 
     async function handleHostDisconnection() {
@@ -1228,10 +1322,8 @@
         connectionStatus.className = 'status connecting';
         if (hostHeartbeatInterval) clearInterval(hostHeartbeatInterval);
 
-        // FIX: Explicitly remove the old host from our state before doing anything else.
         delete localUserList[currentHostId];
 
-        // Clean up old connection to the departed host
         if (peerConnections['host']) {
             peerConnections['host'].close();
             delete peerConnections['host'];
@@ -1240,46 +1332,43 @@
             delete dataChannels['host'];
         }
 
-        // --- The Election ---
-        // Get a list of all remaining clients, including myself.
+        // **FIXED**: Use myAuthId for election
         const remainingClientIds = Object.keys(localUserList);
-        if (!remainingClientIds.includes(myId)) {
-            remainingClientIds.push(myId);
+        if (!remainingClientIds.includes(myAuthId)) {
+            remainingClientIds.push(myAuthId);
         }
-        
-        // Sort the list. The client at the top is the designated successor.
+
         remainingClientIds.sort();
-        
-        // Handle case where party is now empty
+
         if (remainingClientIds.length === 0) {
             console.log("Party is empty after host left.");
-            // You might want to reset the UI or show a message here
             return;
         }
-        
+
         const newHostId = remainingClientIds[0];
         console.log("Election determined. New host should be:", newHostId);
 
-        if (myId === newHostId) {
-            // I am the new host!
+        if (myAuthId === newHostId) {
             try {
-                await partyDocRef.update({ hostId: myId });
+                await partyDocRef.update({
+                    hostId: myAuthId
+                });
                 console.log("This client has successfully become the new host!");
                 isHost = true;
-                currentHostId = myId;
+                currentHostId = myAuthId;
                 updateUIForNewHost();
-                listenForGuests(); // Start listening for the other clients to reconnect to me.
+                listenForGuests();
                 startHostHeartbeat();
-
-                // Announce the updated user list to everyone
-                broadcastData({ type: 'USER_LIST', users: localUserList });
+                broadcastData({
+                    type: 'USER_LIST',
+                    users: localUserList
+                });
 
             } catch (error) {
                 console.error("Error trying to become host:", error);
                 alert("Could not elect new host. Please refresh the page.");
             }
         } else {
-            // I am not the new host. I will wait and listen for the new host to appear.
             console.log("Waiting for the new host to take over.");
             listenForNewHostAndReconnect();
         }
@@ -1289,12 +1378,12 @@
         const unsubscribe = partyDocRef.onSnapshot(doc => {
             if (!doc.exists) return;
             const newHostId = doc.data().hostId;
-            // Check if the host has changed to someone who is not me and not the old host
-            if (newHostId && newHostId !== myId && newHostId !== currentHostId) {
+            // **FIXED**: Use myAuthId in check
+            if (newHostId && newHostId !== myAuthId && newHostId !== currentHostId) {
                 console.log(`New host detected (${newHostId}). Reconnecting...`);
-                unsubscribe(); // Stop listening to avoid multiple triggers
+                unsubscribe();
                 currentHostId = newHostId;
-                joinParty(); // Re-join the party to connect to the new host
+                joinParty();
             }
         });
     }
@@ -1336,12 +1425,18 @@
 
             li.addEventListener('click', (e) => {
                 if (e.target.classList.contains('remove-btn')) return;
-                handleUserAction({ type: 'PLAY_FROM_QUEUE', index });
+                handleUserAction({
+                    type: 'PLAY_FROM_QUEUE',
+                    index
+                });
             });
 
             li.querySelector('.remove-btn').addEventListener('click', (e) => {
                 e.stopPropagation();
-                handleUserAction({ type: 'REMOVE_FROM_QUEUE', index });
+                handleUserAction({
+                    type: 'REMOVE_FROM_QUEUE',
+                    index
+                });
             });
             queueList.appendChild(li);
         });
@@ -1370,7 +1465,7 @@
     }
 
     function updateUserList(users = {}) {
-        localUserList = users; // Store the user list for elections.
+        localUserList = users;
         userList.innerHTML = '';
         const uniqueUsers = {};
         Object.values(users).forEach(user => {
@@ -1380,9 +1475,11 @@
         });
 
         if (!uniqueUsers[myName]) {
-            uniqueUsers[myName] = {name: myName};
+            uniqueUsers[myName] = {
+                name: myName
+            };
         }
-        
+
         Object.values(uniqueUsers).forEach(user => {
             const li = document.createElement('li');
             let suffix = '';
@@ -1393,7 +1490,6 @@
             userList.appendChild(li);
         });
     }
-
 </script>
 <script src="https://www.youtube.com/iframe_api"></script>
 
