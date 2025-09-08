@@ -267,7 +267,6 @@
             background-color: var(--yt-light-dark);
         }
 
-
         .user-modal {
             position: fixed;
             top: 0;
@@ -455,10 +454,10 @@
          body.theater-mode #theaterModeBtn {
             border-color: rgba(255,255,255,0.2);
          }
-         body.theater-mode #theaterModeBtn svg {
+          body.theater-mode #theaterModeBtn svg {
             stroke: #fff;
          }
-         body.theater-mode #theaterModeBtn:hover {
+          body.theater-mode #theaterModeBtn:hover {
             background-color: rgba(255,255,255,0.2);
          }
         body.theater-mode .header, body.theater-mode .sidebar, body.theater-mode .chat-container, body.theater-mode .page-container > .main-content ~ * {
@@ -555,7 +554,7 @@
 <script src="https://www.gstatic.com/firebasejs/9.6.7/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/9.6.7/firebase-firestore-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/9.6.7/firebase-functions-compat.js"></script>
-<script src="https://www.gstatic.com/firebasejs/9.6.7/firebase-auth-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/9.6.7/firebase-auth-compat.js"></script> <script src="https://www.youtube.com/iframe_api"></script>
 
 <script>
     // --- DARK MODE LOGIC ---
@@ -572,10 +571,9 @@
         }
     });
 
-
     // --- CONFIGURATION ---
     const firebaseConfig = {
-        apiKey: "AIzaSyActKLRV4ldSsS1dKNwkXXdKblnwG0s654",
+        apiKey: "YOUR_FIREBASE_PUBLIC_API_KEY", // Replace with your actual Firebase API Key from your Project Settings
         authDomain: "partysync-17cd5.firebaseapp.com",
         projectId: "partysync-17cd5",
         storageBucket: "partysync-17cd5.appspot.com",
@@ -628,10 +626,8 @@
     // --- AUTHENTICATION & APP START ---
     firebase.auth().onAuthStateChanged(user => {
         if (user) {
-            // User is signed in anonymously.
             myAuthId = user.uid;
             console.log("User signed in with UID:", myAuthId);
-            // Now that we have a user ID, we can enable the main app functionality
             setNameBtn.disabled = false;
         } else {
             myAuthId = null;
@@ -639,7 +635,6 @@
         }
     });
 
-    // Disable the button until auth is ready
     setNameBtn.disabled = true;
     firebase.auth().signInAnonymously().catch((error) => {
         console.error("Anonymous sign-in failed:", error);
@@ -649,7 +644,7 @@
     // --- INITIALIZATION ---
     setNameBtn.addEventListener('click', () => {
         const name = userNameInput.value.trim();
-        if (name && myAuthId) { // Check that we have an auth ID before continuing
+        if (name && myAuthId) {
             myName = name;
             userModal.classList.add('hidden');
             mainContent.classList.remove('hidden');
@@ -672,12 +667,10 @@
             isHost = true;
             startHostHeartbeat();
         }
-
         sendChatBtn.addEventListener('click', sendChatMessage);
         chatInput.addEventListener('keypress', e => {
             if (e.key === 'Enter') sendChatMessage();
         });
-
         window.addEventListener('beforeunload', () => {
             const data = { type: 'USER_LEAVING' };
             Object.values(dataChannels).forEach(channel => {
@@ -713,9 +706,7 @@
     async function searchYouTube() {
         const query = searchInput.value;
         if (!query) return;
-
         const searchYoutubeFunction = app.functions('us-central1').httpsCallable('searchYoutube');
-
         try {
             console.log("Calling Cloud Function with query:", query);
             const result = await searchYoutubeFunction({ query: query });
@@ -1275,7 +1266,6 @@
         });
     }
 </script>
-<script src="https://www.youtube.com/iframe_api"></script>
 
 </body>
 </html>
