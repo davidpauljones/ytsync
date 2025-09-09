@@ -62,7 +62,10 @@
         body.dark .sun-icon { display: none; }
         body.dark .moon-icon { display: block; }
         .page-container { display: flex; flex-direction: column; padding: 24px; max-width: 1440px; margin: 0 auto; }
-        @media (min-width: 1024px) { .page-container { display: grid; grid-template-columns: 1fr 402px; gap: 24px; align-items: flex-start; } }
+        @media (min-width: 1024px) {
+            .page-container { display: grid; grid-template-columns: 1fr 402px; gap: 24px; align-items: flex-start; }
+            .chat-container { grid-column: 1 / 2; grid-row: 2 / 3; margin-top: 0; } /* rely on grid row gap */
+        }
         .main-content { flex: 1; min-width: 0; }
         @media (min-width: 1024px) { .main-content { grid-column: 1 / 2; grid-row: 1 / 2; } }
         .sidebar { width: 100%; max-width: 402px; margin: 24px auto 0 auto; }
@@ -84,6 +87,9 @@
         .user-container input { background-color: var(--input-background); color: var(--primary-text); border: 1px solid var(--border-color); border-radius: 8px; padding: 8px; margin: 0 8px; }
         #inviteLink { font-size: 14px; background-color: var(--input-background); color: var(--primary-text); border: 1px solid var(--border-color); padding: 8px; border-radius: 8px; width: calc(100% - 16px); }
         #createInviteBtn { width: 100%; margin-bottom: 10px;}
+        .invite-row { display: flex; gap: 8px; margin-top: 8px; align-items: center; }
+        .invite-row #inviteLink { width: auto; flex: 1; min-width: 0; }
+        .invite-row button { padding: 8px 12px; }
         #userList { list-style-type: none; padding-left: 0; }
         #userList li { background-color: var(--primary-background); padding: 8px 12px; border-radius: 4px; margin-bottom: 5px; }
         .status { text-align: center; font-weight: bold; padding: 12px; border-radius: 6px; margin-top: 10px; }
@@ -93,7 +99,10 @@
         button { background-color: var(--yt-red); color: white; padding: 10px 16px; border: none; border-radius: 40px; cursor: pointer; font-size: 14px; font-weight: 500; transition: background-color 0.2s; }
         button:hover { background-color: var(--yt-red-hover); }
         .chat-container { margin-top: 24px; }
-        @media (min-width: 1024px) { .chat-container { grid-column: 1 / 2; grid-row: 2 / 3; } }
+        @media (min-width: 1024px) {
+            .page-container { display: grid; grid-template-columns: 1fr 402px; gap: 24px; align-items: flex-start; }
+            .chat-container { grid-column: 1 / 2; grid-row: 2 / 3; margin-top: 0; } /* rely on grid row gap */
+        }
         .chat-messages { height: 300px; overflow-y: auto; border: 1px solid var(--border-color); background-color: var(--primary-background); padding: 10px; margin-bottom: 10px; border-radius: 8px; display: flex; flex-direction: column; gap: 16px; }
         .chat-message { display: flex; align-items: flex-start; gap: 12px; }
         .avatar { width: 40px; height: 40px; border-radius: 50%; color: white; display: flex; align-items: center; justify-content: center; font-weight: bold; flex-shrink: 0; font-size: 18px; }
@@ -103,24 +112,160 @@
         .chat-input-container { display: flex; gap: 8px; }
         #chatInput { flex-grow: 1; border-radius: 20px; background-color: var(--input-background); border: 1px solid var(--border-color); color: var(--primary-text); padding: 10px; }
         #sendChatBtn { padding: 10px 20px; }
-        .player-controls { display: flex; justify-content: space-between; align-items: center; padding: 8px 12px; margin-top: 8px; background-color: var(--secondary-background); border: 1px solid var(--border-color); border-radius: 12px; }
+        .player-controls { display: flex; justify-content: space-between; align-items: center; padding: 8px 12px; margin-top: 16px; background-color: var(--secondary-background); border: 1px solid var(--border-color); border-radius: 12px; }
         .video-title-toolbar { flex-grow: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-weight: bold; font-size: 16px; padding-right: 16px; }
         #theaterModeBtn { background: none; border: 1px solid var(--border-color); color: var(--primary-text); padding: 8px; border-radius: 50%; cursor: pointer; display: flex; align-items: center; justify-content: center; z-index: 50; flex-shrink: 0; }
         #theaterModeBtn:hover { background-color: var(--hover-background); }
         #theaterModeBtn svg { stroke: var(--primary-text); }
         body.theater-mode .main-content { position: fixed; top: 0; left: 0; width: 100vw; height: 100vh; background-color: #000; z-index: 500; padding: 0; margin: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; }
         body.theater-mode .player-container { width: 100%; height: 100%; border-radius: 0; }
-        body.theater-mode .player-controls { position: absolute; top: 10px; left: 10px; right: 10px; margin-top: 0; background-color: rgba(0,0,0,0.5); border: 1px solid rgba(255,255,255,0.2); }
-        body.theater-mode .video-title-toolbar { color: #fff; }
-        body.theater-mode #theaterModeBtn { border-color: rgba(255,255,255,0.2); }
-        body.theater-mode #theaterModeBtn svg { stroke: #fff; }
-        body.theater-mode #theaterModeBtn:hover { background-color: rgba(255,255,255,0.2); }
+        /* Hide the toolbar in theater mode */
+        body.theater-mode .player-controls { display: none; }
         body.theater-mode .header, body.theater-mode .sidebar, body.theater-mode .chat-container, body.theater-mode .page-container > .main-content ~ * { display: none; }
         .expand-icon { display: block; }
         .close-icon { display: none; }
         body.theater-mode .expand-icon { display: none; }
         body.theater-mode .close-icon { display: block; }
         .hidden { display: none !important; }
+
+        /* Centered close button for theater mode */
+        #theaterCloseBtn {
+            position: fixed;
+            top: 12px;
+            left: 50%;
+            transform: translateX(-50%);
+            z-index: 1001;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            width: 44px;
+            height: 44px;
+            padding: 0;
+            border-radius: 50%;
+            border: 1px solid rgba(255,255,255,0.25);
+            background-color: rgba(0,0,0,0.6);
+            color: #fff;
+            cursor: pointer;
+            backdrop-filter: blur(4px);
+            /* fade behavior */
+            opacity: 0;
+            pointer-events: none;
+            transition: opacity 180ms ease-in-out;
+        }
+        body.dark #theaterCloseBtn { border-color: rgba(255,255,255,0.25); }
+
+        /* When theater UI should be visible */
+        body.theater-mode.theater-ui-visible #theaterCloseBtn {
+            opacity: 1;
+            pointer-events: auto;
+        }
+
+        /* Transparent hover sensor to detect mouse movement over iframe */
+        #theaterHoverSensor {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100vw;
+            height: 96px; /* small strip */
+            background: transparent;
+            z-index: 1000; /* just under the close button */
+            display: none;
+        }
+        body.theater-mode #theaterHoverSensor { display: block; }
+
+        /* Up Next overlay */
+        .upnext-overlay {
+            position: absolute;
+            inset: 0;
+            z-index: 1002; /* above iframe and sensors */
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            gap: 16px;
+            background: linear-gradient(180deg, rgba(0,0,0,0.65), rgba(0,0,0,0.85));
+            color: #fff;
+            opacity: 0;
+            pointer-events: none;
+            transition: opacity 180ms ease-in-out;
+            padding: 16px;
+            text-align: center;
+        }
+        .upnext-overlay.active {
+            opacity: 1;
+            pointer-events: auto; /* block clicks to YouTube suggestions */
+        }
+        /* Ensure overlay captures clicks above the player iframe */
+        .player-container.overlay-active #player,
+        .player-container.overlay-active #player iframe {
+            pointer-events: none !important;
+        }
+
+        /* Up Next grid layout */
+        .upnext-title { font-size: 20px; font-weight: 600; }
+        .upnext-grid {
+            display: grid;
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+            gap: 12px;
+            width: 100%;
+            max-width: 1100px;
+            padding: 0 12px;
+        }
+        @media (min-width: 640px) {
+            .upnext-grid { grid-template-columns: repeat(3, 1fr); }
+        }
+        @media (min-width: 1024px) {
+            .upnext-grid { grid-template-columns: repeat(4, 1fr); }
+        }
+        .upnext-item {
+            background: rgba(255,255,255,0.08);
+            border: 1px solid rgba(255,255,255,0.15);
+            border-radius: 10px;
+            overflow: hidden;
+            cursor: pointer;
+            display: flex;
+            flex-direction: column;
+            text-align: left;
+            transition: transform 120ms ease, box-shadow 120ms ease, background 120ms ease;
+        }
+        .upnext-item:hover {
+            transform: translateY(-2px);
+            background: rgba(255,255,255,0.12);
+            box-shadow: 0 6px 20px rgba(0,0,0,0.35);
+        }
+        .upnext-item:focus {
+            outline: 2px solid rgba(255,255,255,0.35);
+            outline-offset: -2px;
+        }
+        .upnext-thumb {
+            width: 100%;
+            aspect-ratio: 16 / 9;
+            object-fit: cover;
+            display: block;
+            background: #000;
+        }
+        .upnext-info {
+            padding: 8px 10px 10px;
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+        }
+        .upnext-title-line {
+            font-size: 14px;
+            font-weight: 600;
+            color: #fff;
+            display: -webkit-box;
+            -webkit-line-clamp: 2;
+            -webkit-box-orient: vertical;
+            overflow: hidden;
+        }
+        .upnext-meta {
+            font-size: 12px;
+            color: rgba(255,255,255,0.8);
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
     </style>
 </head>
 <body>
@@ -156,7 +301,18 @@
     
     <div class="page-container">
         <div class="main-content">
-            <div class="player-container"><div id="player"></div></div>
+            <div class="player-container"><div id="player"></div>
+                <!-- Up Next overlay -->
+                <div id="upNextOverlay" class="upnext-overlay" aria-hidden="true">
+                    <div class="upnext-title">Up next</div>
+                    <div id="upNextList" class="upnext-grid"></div>
+                    <div class="upnext-actions">
+                        <button id="upNextReplayBtn" class="upnext-btn" title="Replay current video">Replay</button>
+                        <button id="upNextCloseBtn" class="upnext-btn" title="Close">Close</button>
+                    </div>
+                    <div style="font-size:12px;opacity:.8;">Suggestions appear here when the queue is empty.</div>
+                </div>
+            </div>
             <div class="player-controls">
                 <div id="videoTitle" class="video-title-toolbar">No video loaded</div>
                 <button id="theaterModeBtn" title="Theater Mode">
@@ -181,7 +337,11 @@
                 <h2>Party Sync</h2>
                 <div id="connectionManagement">
                     <button id="createInviteBtn">Create Invite Link</button>
-                    <input type="text" id="inviteLink" class="hidden" readonly>
+                    <!-- Inline invite link + Copy button -->
+                    <div class="invite-row hidden" id="inviteRow">
+                        <input type="text" id="inviteLink" readonly>
+                        <button id="copyInviteBtn" aria-label="Copy invite link" title="Copy to clipboard">Copy</button>
+                    </div>
                 </div>
                 <h3>Connected Users</h3>
                 <ul id="userList"></ul>
@@ -199,6 +359,18 @@
         </div>
     </div>
 </div>
+
+<!-- Transparent sensor to detect mouse movement near top in theater mode -->
+<div id="theaterHoverSensor" aria-hidden="true"></div>
+
+<!-- Centered close button (only used in theater mode) -->
+<button id="theaterCloseBtn" aria-label="Exit Theater Mode" title="Exit Theater Mode">
+    <!-- X icon -->
+    <svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" focusable="false">
+        <line x1="18" y1="6" x2="6" y2="18"></line>
+        <line x1="6" y1="6" x2="18" y2="18"></line>
+    </svg>
+</button>
 
 <script src="https://www.gstatic.com/firebasejs/9.6.7/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/9.6.7/firebase-firestore-compat.js"></script>
@@ -248,6 +420,8 @@
     const connectionStatus = document.getElementById('connectionStatus');
     const createInviteBtn = document.getElementById('createInviteBtn');
     const inviteLinkInput = document.getElementById('inviteLink');
+    const inviteRow = document.getElementById('inviteRow');
+    const copyInviteBtn = document.getElementById('copyInviteBtn');
     const userList = document.getElementById('userList');
     const chatMessages = document.getElementById('chatMessages');
     const chatInput = document.getElementById('chatInput');
@@ -272,6 +446,168 @@
     let lastUserActionTimestamp = 0;
     let intentToAutoPlay = false;
     let localUserList = {};
+    // Track real user gestures to distinguish auto-pauses on hidden tabs
+    let lastUserGestureAt = 0;
+    ['pointerdown','keydown','touchstart','click'].forEach(evt =>
+        document.addEventListener(evt, () => { lastUserGestureAt = Date.now(); }, { passive: true })
+    );
+    // Track the currently loaded videoId
+    let currentVideoId = null;
+
+    // Helpful mapping for logging YT state numbers
+    const YT_STATE = {
+        [-1]: 'UNSTARTED',
+        [0]: 'ENDED',
+        [1]: 'PLAYING',
+        [2]: 'PAUSED',
+        [3]: 'BUFFERING',
+        [5]: 'CUED',
+    };
+
+    // Up Next overlay elements
+    const upNextOverlay = document.getElementById('upNextOverlay');
+    const upNextList = document.getElementById('upNextList');
+    const upNextCloseBtn = document.getElementById('upNextCloseBtn');
+    const upNextReplayBtn = document.getElementById('upNextReplayBtn');
+    let upNextActive = false;
+
+    // Also grab the container to toggle a helper class
+    const playerContainer = document.querySelector('.player-container');
+
+    function showUpNextOverlay() {
+        // Move overlay to be last child to sit above everything
+        if (upNextOverlay.parentElement) {
+            upNextOverlay.parentElement.appendChild(upNextOverlay);
+        }
+        upNextOverlay.classList.add('active');
+        upNextOverlay.setAttribute('aria-hidden', 'false');
+        // Inline fallbacks in case of CSS specificity issues
+        upNextOverlay.style.opacity = '1';
+        upNextOverlay.style.pointerEvents = 'auto';
+        if (playerContainer) playerContainer.classList.add('overlay-active');
+        upNextActive = true;
+        console.log('[UpNext] Overlay shown');
+    }
+    function hideUpNextOverlay() {
+        upNextOverlay.classList.remove('active');
+        upNextOverlay.setAttribute('aria-hidden', 'true');
+        upNextOverlay.style.opacity = '';
+        upNextOverlay.style.pointerEvents = '';
+        if (playerContainer) playerContainer.classList.remove('overlay-active');
+        upNextActive = false;
+        console.log('[UpNext] Overlay hidden');
+    }
+    async function populateUpNextSuggestions() {
+        try {
+            if (!player || !player.getVideoData) return;
+            const data = player.getVideoData();
+            const title = data?.title || '';
+            const vid = data?.video_id || currentVideoId;
+            currentVideoId = vid || currentVideoId;
+
+            upNextList.innerHTML = '<div style="grid-column:1/-1;opacity:.8;">Loading suggestions…</div>';
+
+            // Call the Cloud Function to search by the current title (approximate related)
+            const searchYoutubeFunction = app.functions('us-central1').httpsCallable('searchYoutube');
+            const res = await searchYoutubeFunction({ query: title || 'YouTube' });
+            const items = (res.data?.items || [])
+                .map(it => {
+                    const id = typeof it.id === 'object' ? it.id.videoId : it.id;
+                    return {
+                        videoId: id,
+                        title: it.snippet?.title || '',
+                        channel: it.snippet?.channelTitle || '',
+                        thumb: it.snippet?.thumbnails?.medium?.url || it.snippet?.thumbnails?.default?.url
+                    };
+                })
+                .filter(v => v.videoId && v.videoId !== vid)
+                .slice(0, 8);
+
+            if (!items.length) {
+                upNextList.innerHTML = '<div style="grid-column:1/-1;opacity:.8;">No suggestions found.</div>';
+                return;
+            }
+
+            upNextList.innerHTML = '';
+            for (const it of items) {
+                const card = document.createElement('div');
+                card.className = 'upnext-item';
+                card.setAttribute('role', 'button');
+                card.setAttribute('tabindex', '0');
+                card.setAttribute('aria-label', `Play ${it.title}`);
+                card.innerHTML = `
+                    <img class="upnext-thumb" src="${it.thumb}" alt="">
+                    <div class="upnext-info">
+                        <div class="upnext-title-line" title="${it.title}">${it.title}</div>
+                        <div class="upnext-meta" title="${it.channel}">${it.channel}</div>
+                    </div>
+                `;
+                const playSelected = () => {
+                    hideUpNextOverlay();
+                    handleUserAction({ type: 'NEW_VIDEO', videoId: it.videoId, autoPlay: true });
+                };
+                card.addEventListener('click', playSelected);
+                card.addEventListener('keydown', (e) => {
+                    if (e.key === 'Enter' || e.key === ' ') {
+                        e.preventDefault();
+                        playSelected();
+                    }
+                });
+                upNextList.appendChild(card);
+            }
+        } catch (e) {
+            console.warn('Failed to load suggestions', e);
+            upNextList.innerHTML = '<div style="grid-column:1/-1;opacity:.8;">Failed to load suggestions.</div>';
+        }
+    }
+
+    upNextCloseBtn.addEventListener('click', hideUpNextOverlay);
+    upNextReplayBtn.addEventListener('click', () => {
+        if (currentVideoId) {
+            hideUpNextOverlay();
+            handleUserAction({ type: 'NEW_VIDEO', videoId: currentVideoId, autoPlay: true });
+        }
+    });
+
+    // Intercept YouTube suggestion clicks that try to open a new tab and play them in-app instead
+    (function installYouTubeOpenInterceptor() {
+        const originalOpen = window.open ? window.open.bind(window) : null;
+        function extractYouTubeVideoId(urlLike) {
+            try {
+                const urlStr = String(urlLike);
+                const re = /(?:v=|\/shorts\/|youtu\.be\/)([A-Za-z0-9_-]{11})/;
+                const m = urlStr.match(re);
+                if (m && m[1]) return m[1];
+                const u = new URL(urlStr, window.location.href);
+                const host = u.hostname.replace(/^www\./, '');
+                if (host.endsWith('youtu.be')) {
+                    const parts = u.pathname.split('/').filter(Boolean);
+                    if (parts[0] && parts[0].length === 11) return parts[0];
+                }
+                if (host.endsWith('youtube.com')) {
+                    if (u.pathname.startsWith('/shorts/')) {
+                        const id = u.pathname.split('/')[2] || u.pathname.split('/')[1];
+                        if (id && id.length === 11) return id;
+                    }
+                    const v = u.searchParams.get('v');
+                    if (v && v.length === 11) return v;
+                }
+            } catch (_) {}
+            return null;
+        }
+        window.open = function(url, target, features) {
+            const vid = extractYouTubeVideoId(url);
+            if (vid) {
+                try {
+                    handleUserAction({ type: 'NEW_VIDEO', videoId: vid, autoPlay: true });
+                    return null;
+                } catch (e) {
+                    return originalOpen ? originalOpen(url, target, features) : null;
+                }
+            }
+            return originalOpen ? originalOpen(url, target, features) : null;
+        };
+    })();
 
     // --- AUTHENTICATION & APP START ---
     firebase.auth().onAuthStateChanged(user => {
@@ -333,21 +669,81 @@
 
     // --- THEATER MODE ---
     const theaterModeBtn = document.getElementById('theaterModeBtn');
+    const theaterCloseBtn = document.getElementById('theaterCloseBtn');
+    const theaterHoverSensor = document.getElementById('theaterHoverSensor');
+    let theaterUiHideTimer;
+
+    function showTheaterUiTemporarily(delayMs = 3000) {
+        document.body.classList.add('theater-ui-visible');
+        clearTimeout(theaterUiHideTimer);
+        theaterUiHideTimer = setTimeout(() => {
+            document.body.classList.remove('theater-ui-visible');
+        }, delayMs);
+    }
+
+    function theaterActivityPing() {
+        if (!document.body.classList.contains('theater-mode')) return;
+        showTheaterUiTemporarily();
+    }
+
+    function disableTheaterUi() {
+        clearTimeout(theaterUiHideTimer);
+        document.body.classList.remove('theater-ui-visible');
+        document.removeEventListener('mousemove', theaterActivityPing);
+        document.removeEventListener('keydown', theaterActivityPing);
+        document.removeEventListener('wheel', theaterActivityPing, { passive: true });
+        document.removeEventListener('touchstart', theaterActivityPing, { passive: true });
+        theaterHoverSensor.removeEventListener('mousemove', theaterActivityPing);
+        theaterHoverSensor.removeEventListener('mouseenter', theaterActivityPing);
+        theaterCloseBtn.removeEventListener('click', exitTheaterMode);
+    }
+
+    function enableTheaterUi() {
+        showTheaterUiTemporarily();
+        // Re-show on user activity (mouse over doc, top sensor, keys, wheel, touch)
+        document.addEventListener('mousemove', theaterActivityPing);
+        document.addEventListener('keydown', theaterActivityPing);
+        document.addEventListener('wheel', theaterActivityPing, { passive: true });
+        document.addEventListener('touchstart', theaterActivityPing, { passive: true });
+        theaterHoverSensor.addEventListener('mousemove', theaterActivityPing);
+        theaterHoverSensor.addEventListener('mouseenter', theaterActivityPing);
+        theaterCloseBtn.addEventListener('click', exitTheaterMode);
+    }
+
+    function exitTheaterMode() {
+        document.body.classList.remove('theater-mode');
+        theaterModeBtn.title = 'Theater Mode';
+        disableTheaterUi();
+    }
+
     theaterModeBtn.addEventListener('click', () => {
         document.body.classList.toggle('theater-mode');
         const inTheaterMode = document.body.classList.contains('theater-mode');
         theaterModeBtn.title = inTheaterMode ? 'Exit Theater Mode' : 'Theater Mode';
+        if (inTheaterMode) {
+            enableTheaterUi();
+        } else {
+            disableTheaterUi();
+        }
     });
+
+    // Allow Esc to exit theater mode
     document.addEventListener('keydown', (event) => {
         if (event.key === 'Escape' && document.body.classList.contains('theater-mode')) {
-            document.body.classList.remove('theater-mode');
-            theaterModeBtn.title = 'Theater Mode';
+            exitTheaterMode();
         }
     });
 
     // --- YOUTUBE API ---
     window.onYouTubeIframeAPIReady = () => player = new YT.Player('player', {
         videoId: '',
+        // Keep suggestions inside the iframe and improve UX
+        playerVars: {
+            rel: 0,
+            playsinline: 1,
+            modestbranding: 1,
+            origin: window.location.origin
+        },
         events: { 'onStateChange': onPlayerStateChange }
     });
     searchButton.addEventListener('click', searchYouTube);
@@ -425,7 +821,11 @@
         currentHostId = myAuthId;
         const url = `${window.location.href.split('?')[0]}?party=${partyId}`;
         inviteLinkInput.value = url;
-        inviteLinkInput.classList.remove('hidden');
+        // Show inline row with copy button
+        inviteRow.classList.remove('hidden');
+        copyInviteBtn.disabled = false;
+        copyInviteBtn.textContent = 'Copy';
+
         createInviteBtn.disabled = true;
         partyDocRef = db.collection('parties').doc(partyId);
         await partyDocRef.set({
@@ -602,17 +1002,33 @@
 
     function sendRequestToHost(data) {
         if (isHost) return;
-        if (data.type === 'STATE_CHANGE' && officialVideoDuration > 0) {
-            const currentDuration = player.getDuration();
-            if (currentDuration === 0 || Math.abs(currentDuration - officialVideoDuration) > 2) {
-                console.log("Ad or buffer detected. Suppressing request to host.");
+
+        if (data.type === 'STATE_CHANGE') {
+            // Do not forward pauses caused by hidden tab (not user initiated)
+            if ((data.state === YT.PlayerState.PAUSED || data.state === YT.PlayerState.ENDED) &&
+                document.hidden && !data.userInitiated) {
+                console.log('Suppressing pause from hidden/inactive tab.');
                 return;
             }
+
+            // Keep ad/buffer suppression for non-pause states
+            if (data.state !== YT.PlayerState.PAUSED && data.state !== YT.PlayerState.ENDED) {
+                if (officialVideoDuration > 0) {
+                    const currentDuration = typeof player.getDuration === 'function' ? player.getDuration() : 0;
+                    if (currentDuration === 0 || Math.abs(currentDuration - officialVideoDuration) > 2) {
+                        console.log("Ad/buffer detected. Suppressing non-pause request to host.");
+                        return;
+                    }
+                }
+            }
         }
+
         const requestData = { ...data, type: `REQUEST_${data.type}` };
         const hostChannel = dataChannels['host'];
         if (hostChannel && hostChannel.readyState === 'open') {
             hostChannel.send(JSON.stringify(requestData));
+        } else {
+            console.warn("Host channel not open; cannot send request.");
         }
     }
 
@@ -668,32 +1084,76 @@
     }
 
     function onPlayerStateChange(event) {
-        if (event.data === YT.PlayerState.PLAYING || event.data === YT.PlayerState.CUED) {
+        const state = event.data;
+        console.log('[YT] onPlayerStateChange:', state, `(${YT_STATE[state] || 'UNKNOWN'})`, {
+            queueLen: videoQueue.length,
+            hidden: document.hidden,
+            currentVideoId,
+        });
+
+        // Show "Up Next" immediately when video ends and queue is empty (before any early returns)
+        if (state === YT.PlayerState.ENDED && videoQueue.length === 0) {
+            if (!upNextActive) {
+                console.log('[UpNext] ENDED with empty queue — showing overlay');
+                showUpNextOverlay();
+                setTimeout(() => populateUpNextSuggestions(), 0);
+            }
+        }
+
+        // Only hide overlay when playback resumes
+        if (state === YT.PlayerState.PLAYING) {
+            updateVideoTitle();
+            hideUpNextOverlay();
+        } else if (state === YT.PlayerState.CUED) {
             updateVideoTitle();
         }
-        if (isHost && intentToAutoPlay && event.data === YT.PlayerState.CUED) {
+
+        if (isHost && intentToAutoPlay && state === YT.PlayerState.CUED) {
             intentToAutoPlay = false;
-            handleUserAction({ type: 'STATE_CHANGE', state: YT.PlayerState.PLAYING, time: 0 });
+            handleUserAction({ type: 'STATE_CHANGE', state: YT.PlayerState.PLAYING, time: 0, userInitiated: true });
             return;
         }
-        if (isSyncingFromHost) {
-            isSyncingFromHost = false;
-            lastPlayerState = event.data;
+
+        // Detect in-iframe selection (e.g., end-screen click that navigates inside iframe)
+        try {
+            const vid = (player && typeof player.getVideoData === 'function') ? player.getVideoData().video_id : null;
+            if (vid && currentVideoId && vid !== currentVideoId) {
+                console.log('[YT] Detected in-iframe selection of new video:', vid);
+                currentVideoId = vid;
+                handleUserAction({ type: 'NEW_VIDEO', videoId: vid, autoPlay: true });
+                return;
+            }
+        } catch (_) {}
+
+        // Ignore pure buffering
+        if (state === YT.PlayerState.BUFFERING) return;
+
+        // Suppress duplicate states EXCEPT allow ENDED to still propagate once (overlay handled above)
+        if (state !== YT.PlayerState.ENDED && state === lastPlayerState) return;
+
+        lastPlayerState = state;
+
+        const userInitiated = (Date.now() - lastUserGestureAt) < 1500;
+
+        if ((state === YT.PlayerState.PAUSED || state === YT.PlayerState.ENDED) &&
+            document.hidden && !userInitiated) {
+            console.log('[YT] Ignoring auto-pause from hidden/inactive tab.');
             return;
         }
-        if (event.data === YT.PlayerState.BUFFERING) { return; }
-        if (event.data === lastPlayerState) { return; }
-        lastUserActionTimestamp = Date.now();
-        const newState = event.data;
-        lastPlayerState = newState;
-        if (isHost && newState === YT.PlayerState.PLAYING) {
+
+        if (userInitiated) {
+            lastUserActionTimestamp = Date.now();
+        }
+
+        if (isHost && state === YT.PlayerState.PLAYING) {
             const duration = player.getDuration();
             if (Math.abs(duration - officialVideoDuration) > 1) {
                 officialVideoDuration = duration;
                 broadcastData({ type: 'VIDEO_DURATION', duration: duration });
             }
         }
-        const actionData = { type: 'STATE_CHANGE', state: newState, time: player.getCurrentTime() };
+
+        const actionData = { type: 'STATE_CHANGE', state, time: player.getCurrentTime(), userInitiated };
         handleUserAction(actionData);
     }
 
@@ -716,6 +1176,9 @@
                 } else {
                     player.seekTo(data.time, true);
                 }
+                // Track the synced video
+                currentVideoId = data.videoId;
+                hideUpNextOverlay();
                 setTimeout(() => {
                     isSyncingFromHost = true;
                     if (data.state === YT.PlayerState.PLAYING) player.playVideo();
@@ -730,6 +1193,9 @@
             case 'NEW_VIDEO':
                 isSyncingFromHost = true;
                 officialVideoDuration = 0;
+                // Track the app-selected video
+                currentVideoId = data.videoId;
+                hideUpNextOverlay();
                 if (player.getVideoData()?.video_id !== data.videoId) {
                     if (isHost && data.autoPlay) {
                         intentToAutoPlay = true;
@@ -813,6 +1279,25 @@
         }
     }
 
+    // Copy invite link handler
+    copyInviteBtn.addEventListener('click', async () => {
+        const link = inviteLinkInput.value;
+        if (!link) return;
+        try {
+            await navigator.clipboard.writeText(link);
+            copyInviteBtn.textContent = 'Copied!';
+            setTimeout(() => (copyInviteBtn.textContent = 'Copy'), 1500);
+        } catch (err) {
+            // Fallback for non-secure contexts
+            inviteLinkInput.select();
+            inviteLinkInput.setSelectionRange(0, link.length);
+            const success = document.execCommand && document.execCommand('copy');
+            copyInviteBtn.textContent = success ? 'Copied!' : 'Copy failed';
+            setTimeout(() => (copyInviteBtn.textContent = 'Copy'), 1500);
+            if (window.getSelection) window.getSelection().removeAllRanges();
+        }
+    });
+
     function startHostHeartbeat() {
         if (hostHeartbeatInterval) clearInterval(hostHeartbeatInterval);
         hostHeartbeatInterval = setInterval(() => {
@@ -820,6 +1305,7 @@
                 const currentState = player.getPlayerState();
                 if (currentState === YT.PlayerState.ENDED && videoQueue.length > 0) {
                     const nextVideo = videoQueue.shift();
+                    hideUpNextOverlay();
                     broadcastData({ type: 'NEW_VIDEO', videoId: nextVideo.videoId, autoPlay: true });
                     broadcastData({ type: 'QUEUE_UPDATE', queue: videoQueue });
                     return;
@@ -943,13 +1429,14 @@
             statusText = 'Waiting for guests...';
             statusClass = 'connecting';
         } else if (connectedCount > 0 || (!isHost && peerConnections['host'] && peerConnections['host'].connectionState === 'connected')) {
-            statusText = `Connected to host`;
+            statusText = 'Connected';
             statusClass = 'connected';
         } else if (!isHost && states.some(s => ['connecting', 'new', 'checking'].includes(s))) {
             statusText = 'Connecting...';
             statusClass = 'connecting';
         }
-        connectionStatus.textContent = `Status: ${statusText}`;
+        // Show just "Connected" when connected; otherwise keep the "Status: ..." prefix
+        connectionStatus.textContent = statusClass === 'connected' ? 'Connected' : `Status: ${statusText}`;
         connectionStatus.className = `status ${statusClass}`;
     }
 
