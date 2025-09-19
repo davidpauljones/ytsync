@@ -828,21 +828,17 @@
 
         createInviteBtn.disabled = true;
         partyDocRef = db.collection('parties').doc(partyId);
--        await partyDocRef.set({
--            hostId: myAuthId,
--            createdAt: firebase.firestore.FieldValue.serverTimestamp()
--        });
-+        try {
-+            await partyDocRef.set({
-+                hostId: myAuthId,
-+                createdAt: firebase.firestore.FieldValue.serverTimestamp()
-+            });
-+            console.log('[HOST] Created party doc', partyId);
-+        } catch (e) {
-+            console.error('[HOST] Failed to create party doc:', e);
-+            alert('Could not create party in Firestore. Check Firestore rules and console.');
-+            return;
-+        }
+        try {
+            await partyDocRef.set({
+                hostId: myAuthId,
+                createdAt: firebase.firestore.FieldValue.serverTimestamp()
+            });
+            console.log('[HOST] Created party doc', partyId);
+        } catch (e) {
+            console.error('[HOST] Failed to create party doc:', e);
+            alert('Could not create party in Firestore. Check Firestore rules and console.');
+            return;
+        }
         listenForGuests();
         startHostHeartbeat();
     });
@@ -923,7 +919,7 @@
         console.log('[HOST] Listening for guests on party', partyId);
         partyDocRef.collection('guests').onSnapshot(async snapshot => {
             for (const change of snapshot.docChanges()) {
-                if change.type === 'added') {
+                if (change.type === 'added') {
                     const guestId = change.doc.id;
                     const { offer, name } = change.doc.data() || {};
                     console.log('[HOST] Guest added:', guestId, 'name:', name);
@@ -980,42 +976,39 @@
     }
 
     function createPeerConnection(peerId, peerName) {
--        const pc = new RTCPeerConnection({ iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] });
-+        const pc = new RTCPeerConnection({
-+            iceServers: [
-+                { urls: ['stun:stun.l.google.com:19302','stun:stun1.l.google.com:19302','stun:stun2.l.google.com:19302'] },
-+                // Add your TURN server for reliability (required for many NATs)
-+                // { urls: 'turn:YOUR_TURN_HOST:3478', username: 'TURN_USERNAME', credential: 'TURN_PASSWORD' },
-+            ],
-+            iceCandidatePoolSize: 2,
-+        });
-         peerConnections[peerId] = pc;
-         pc.peerName = peerName;
--        pc.onconnectionstatechange = () => {
-+        pc.onconnectionstatechange = () => {
-+            console.log(`[RTC:${peerId}] connectionState=`, pc.connectionState);
-             updateConnectionStatus();
-             if (peerId === 'host' && !isHost) {
-                 const state = pc.connectionState;
-                 if (state === 'disconnected' || state === 'failed' || state === 'closed') {
-                     console.warn(`Connection to host lost. State: ${state}`);
-                     if (!window.migrationInProgress) {
-                         window.migrationInProgress = true;
-                         handleHostDisconnection();
-                     }
-                 }
-             }
-         };
-+        pc.oniceconnectionstatechange = () => {
-+            console.log(`[RTC:${peerId}] iceConnectionState=`, pc.iceConnectionState);
-+            if (pc.iceConnectionState === 'failed') {
-+                console.warn(`[RTC:${peerId}] ICE failed. You likely need a TURN server.`);
-+            }
-+        };
-+        pc.onsignalingstatechange = () => console.log(`[RTC:${peerId}] signalingState=`, pc.signalingState);
-+        pc.onicegatheringstatechange = () => console.log(`[RTC:${peerId}] iceGatheringState=`, pc.iceGatheringState);
-         return pc;
-     }
+        const pc = new RTCPeerConnection({
+            iceServers: [
+                { urls: ['stun:stun.l.google.com:19302','stun:stun1.l.google.com:19302','stun:stun2.l.google.com:19302'] },
+                // { urls: 'turn:YOUR_TURN_HOST:3478', username: 'TURN_USERNAME', credential: 'TURN_PASSWORD' },
+            ],
+            iceCandidatePoolSize: 2,
+        });
+        peerConnections[peerId] = pc;
+        pc.peerName = peerName;
+        pc.onconnectionstatechange = () => {
+            console.log(`[RTC:${peerId}] connectionState=`, pc.connectionState);
+            updateConnectionStatus();
+            if (peerId === 'host' && !isHost) {
+                const state = pc.connectionState;
+                if (state === 'disconnected' || state === 'failed' || state === 'closed') {
+                    console.warn(`Connection to host lost. State: ${state}`);
+                    if (!window.migrationInProgress) {
+                        window.migrationInProgress = true;
+                        handleHostDisconnection();
+                    }
+                }
+            }
+        };
+        pc.oniceconnectionstatechange = () => {
+            console.log(`[RTC:${peerId}] iceConnectionState=`, pc.iceConnectionState);
+            if (pc.iceConnectionState === 'failed') {
+                console.warn(`[RTC:${peerId}] ICE failed. You likely need a TURN server.`);
+            }
+        };
+        pc.onsignalingstatechange = () => console.log(`[RTC:${peerId}] signalingState=`, pc.signalingState);
+        pc.onicegatheringstatechange = () => console.log(`[RTC:${peerId}] iceGatheringState=`, pc.iceGatheringState);
+        return pc;
+    }
     
     function resetPartyState() {
         console.log("Resetting party state...");
@@ -1129,51 +1122,48 @@
     function configureDataChannel(peerId, channel, peerName = '') {
         channel.onopen = () => {
             console.log(`[DC:${peerId}] open`);
-             window.migrationInProgress = false;
-             updateConnectionStatus();
-             if (isHost) {
-                 const users = { [myAuthId]: { name: myName } };
-                 Object.entries(peerConnections).forEach(([id, pc]) => {
-                     if (pc.peerName) users[id] = { name: pc.peerName };
-                 });
-                 broadcastData({ type: 'USER_LIST', users });
-                 channel.send(JSON.stringify({ type: 'HOST_INFO', hostId: myAuthId }));
-                 if (player && player.getPlayerState && player.getPlayerState() !== YT.PlayerState.UNSTARTED && player.getVideoData().video_id) {
-                     const syncData = { type: 'INITIAL_SYNC', videoId: player.getVideoData().video_id, time: player.getCurrentTime(), state: player.getPlayerState(), duration: player.getDuration(), queue: videoQueue };
-                     channel.send(JSON.stringify(syncData));
-                 } else {
-                     broadcastData({ type: 'QUEUE_UPDATE', queue: videoQueue });
-                 }
-             }
-         };
--        channel.onclose = () => {
-+        channel.onclose = () => {
-+            console.log(`[DC:${peerId}] close`);
-             if (peerId === 'host' && !isHost && !window.migrationInProgress) {
-                 window.migrationInProgress = true;
-                 handleHostDisconnection();
-                 return;
-             }
-             if (isHost && partyDocRef) {
-                 partyDocRef.collection('guests').doc(peerId).delete().catch(error => console.error("Error removing guest document:", error));
-             }
-             delete peerConnections[peerId];
-             delete dataChannels[peerId];
-             updateConnectionStatus();
-             if (isHost) {
-                 const users = { [myAuthId]: { name: myName } };
-                 Object.entries(peerConnections).forEach(([id, pc]) => {
-                     if (pc.peerName) users[id] = { name: pc.peerName };
-                 });
-                 broadcastData({ type: 'USER_LIST', users });
-             }
-         };
--        channel.onmessage = event => handleReceivedData(JSON.parse(event.data), peerId);
-+        channel.onmessage = event => {
-+            // First message should arrive shortly after open
-+            try { handleReceivedData(JSON.parse(event.data), peerId); }
-+            catch (e) { console.error(`[DC:${peerId}] bad message`, e, event.data); }
-+        };
+            window.migrationInProgress = false;
+            updateConnectionStatus();
+            if (isHost) {
+                const users = { [myAuthId]: { name: myName } };
+                Object.entries(peerConnections).forEach(([id, pc]) => {
+                    if (pc.peerName) users[id] = { name: pc.peerName };
+                });
+                broadcastData({ type: 'USER_LIST', users });
+                channel.send(JSON.stringify({ type: 'HOST_INFO', hostId: myAuthId }));
+                if (player && player.getPlayerState && player.getPlayerState() !== YT.PlayerState.UNSTARTED && player.getVideoData().video_id) {
+                    const syncData = { type: 'INITIAL_SYNC', videoId: player.getVideoData().video_id, time: player.getCurrentTime(), state: player.getPlayerState(), duration: player.getDuration(), queue: videoQueue };
+                    channel.send(JSON.stringify(syncData));
+                } else {
+                    broadcastData({ type: 'QUEUE_UPDATE', queue: videoQueue });
+                }
+            }
+        };
+        channel.onclose = () => {
+            console.log(`[DC:${peerId}] close`);
+            if (peerId === 'host' && !isHost && !window.migrationInProgress) {
+                window.migrationInProgress = true;
+                handleHostDisconnection();
+                return;
+            }
+            if (isHost && partyDocRef) {
+                partyDocRef.collection('guests').doc(peerId).delete().catch(error => console.error("Error removing guest document:", error));
+            }
+            delete peerConnections[peerId];
+            delete dataChannels[peerId];
+            updateConnectionStatus();
+            if (isHost) {
+                const users = { [myAuthId]: { name: myName } };
+                Object.entries(peerConnections).forEach(([id, pc]) => {
+                    if (pc.peerName) users[id] = { name: pc.peerName };
+                });
+                broadcastData({ type: 'USER_LIST', users });
+            }
+        };
+        channel.onmessage = event => {
+            try { handleReceivedData(JSON.parse(event.data), peerId); }
+            catch (e) { console.error(`[DC:${peerId}] bad message`, e, event.data); }
+        };
      }
 
     function onPlayerStateChange(event) {
