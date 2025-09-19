@@ -454,6 +454,16 @@
     // Track the currently loaded videoId
     let currentVideoId = null;
 
+    // WebRTC configuration (add TURN here for reliability)
+    const rtcConfig = {
+        iceServers: [
+            { urls: ['stun:stun.l.google.com:19302','stun:stun1.l.google.com:19302','stun:stun2.l.google.com:19302'] },
+            // Add your TURN server (recommended)
+            // { urls: 'turn:YOUR_TURN_HOST:3478', username: 'TURN_USERNAME', credential: 'TURN_PASSWORD' },
+        ],
+        iceCandidatePoolSize: 2,
+    };
+
     // Helpful mapping for logging YT state numbers
     const YT_STATE = {
         [-1]: 'UNSTARTED',
@@ -852,11 +862,16 @@
         const pc = createPeerConnection('host');
         const candidateBuffer = [];
 
+        // Keep refs on the pc for ICE restarts
+        pc._guestDocRef = guestDocRef;
+        pc._guestGuestCandidatesRef = guestDocRef.collection('guestCandidates');
+        pc._guestHostCandidatesRef = guestDocRef.collection('hostCandidates');
+
         dataChannels['host'] = pc.createDataChannel('sync-channel');
         console.log('[JOIN] Created data channel to host');
         configureDataChannel('host', dataChannels['host']);
 
-        const guestCandidatesRef = guestDocRef.collection('guestCandidates');
+        const guestCandidatesRef = pc._guestGuestCandidatesRef;
 
         pc.onicecandidate = async (event) => {
             if (event.candidate) {
@@ -898,7 +913,7 @@
             }
         });
 
-        guestDocRef.collection('hostCandidates').onSnapshot(snapshot => {
+        pc._guestHostCandidatesRef.onSnapshot(snapshot => {
             snapshot.docChanges().forEach(change => {
                 if (change.type === 'added') {
                     const candidate = change.doc.data();
@@ -919,15 +934,21 @@
         console.log('[HOST] Listening for guests on party', partyId);
         partyDocRef.collection('guests').onSnapshot(async snapshot => {
             for (const change of snapshot.docChanges()) {
+                const doc = change.doc;
+                const guestId = doc.id;
+                const data = doc.data() || {};
                 if (change.type === 'added') {
-                    const guestId = change.doc.id;
-                    const { offer, name } = change.doc.data() || {};
+                    const { offer, name } = data;
                     console.log('[HOST] Guest added:', guestId, 'name:', name);
                     if (peerConnections[guestId] || guestId === myAuthId) continue;
 
                     try {
-                        const guestDocRef = change.doc.ref;
+                        const guestDocRef = doc.ref;
                         const pc = createPeerConnection(guestId, name);
+                        // store refs for restarts
+                        pc._hostGuestDocRef = guestDocRef;
+                        pc._hostHostCandidatesRef = guestDocRef.collection('hostCandidates');
+                        pc._hostGuestCandidatesRef = guestDocRef.collection('guestCandidates');
 
                         pc.ondatachannel = event => {
                             console.log('[HOST] Data channel from guest', guestId);
@@ -935,11 +956,10 @@
                             configureDataChannel(guestId, event.channel, name);
                         };
 
-                        const hostCandidatesRef = guestDocRef.collection('hostCandidates');
                         pc.onicecandidate = async (event) => {
                             if (event.candidate) {
                                 try {
-                                    await hostCandidatesRef.add(event.candidate.toJSON());
+                                    await pc._hostHostCandidatesRef.add(event.candidate.toJSON());
                                     console.log('[HOST] Sent host ICE candidate to', guestId);
                                 } catch (e) {
                                     console.error('[HOST] Failed to write host ICE candidate:', e);
@@ -957,7 +977,7 @@
                         await guestDocRef.update({ answer });
                         console.log('[HOST] Wrote answer for', guestId);
 
-                        guestDocRef.collection('guestCandidates').onSnapshot(snap => {
+                        pc._hostGuestCandidatesRef.onSnapshot(snap => {
                             snap.docChanges().forEach(ch => {
                                 if (ch.type === 'added') {
                                     const cand = ch.doc.data();
@@ -970,29 +990,47 @@
                     } catch (e) {
                         console.error('[HOST] Error handling new guest', guestId, e);
                     }
+                } else if (change.type === 'modified') {
+                    // Handle ICE restart offers from guest
+                    try {
+                        const pc = peerConnections[guestId];
+                        if (!pc) continue;
+                        if (data.offer && pc.signalingState !== 'have-remote-offer') {
+                            console.log('[HOST] Guest', guestId, 'sent ICE-restart offer; answering...');
+                            await pc.setRemoteDescription(new RTCSessionDescription(data.offer));
+                            const answer = await pc.createAnswer();
+                            await pc.setLocalDescription(answer);
+                            await doc.ref.update({ answer });
+                            console.log('[HOST] Wrote restart answer for', guestId);
+                        }
+                    } catch (e) {
+                        console.error('[HOST] Failed to process modified guest doc:', guestId, e);
+                    }
                 }
             }
         });
     }
 
     function createPeerConnection(peerId, peerName) {
-        const pc = new RTCPeerConnection({
-            iceServers: [
-                { urls: ['stun:stun.l.google.com:19302','stun:stun1.l.google.com:19302','stun:stun2.l.google.com:19302'] },
-                // { urls: 'turn:YOUR_TURN_HOST:3478', username: 'TURN_USERNAME', credential: 'TURN_PASSWORD' },
-            ],
-            iceCandidatePoolSize: 2,
-        });
+        const pc = new RTCPeerConnection(rtcConfig);
         peerConnections[peerId] = pc;
         pc.peerName = peerName;
+        pc.peerId = peerId;
+
+        let disconnectTimer = null;
+
         pc.onconnectionstatechange = () => {
             console.log(`[RTC:${peerId}] connectionState=`, pc.connectionState);
             updateConnectionStatus();
+            if (pc.connectionState === 'failed') {
+                console.warn(`[RTC:${peerId}] DTLS failed. Attempting ICE restart (guest side only).`);
+                attemptGuestIceRestart(pc);
+            }
             if (peerId === 'host' && !isHost) {
                 const state = pc.connectionState;
                 if (state === 'disconnected' || state === 'failed' || state === 'closed') {
                     console.warn(`Connection to host lost. State: ${state}`);
-                    if (!window.migrationInProgress) {
+                    if (!window.migrationInProgress && state !== 'disconnected') {
                         window.migrationInProgress = true;
                         handleHostDisconnection();
                     }
@@ -1001,8 +1039,19 @@
         };
         pc.oniceconnectionstatechange = () => {
             console.log(`[RTC:${peerId}] iceConnectionState=`, pc.iceConnectionState);
-            if (pc.iceConnectionState === 'failed') {
+            if (pc.iceConnectionState === 'disconnected') {
+                // Give it a moment to recover, then try restart on guest
+                clearTimeout(disconnectTimer);
+                disconnectTimer = setTimeout(() => {
+                    if (pc.iceConnectionState === 'disconnected') {
+                        console.warn(`[RTC:${peerId}] Still disconnected; attempting ICE restart (guest side only).`);
+                        attemptGuestIceRestart(pc);
+                    }
+                }, 2000);
+            } else if (pc.iceConnectionState === 'failed') {
                 console.warn(`[RTC:${peerId}] ICE failed. You likely need a TURN server.`);
+            } else if (pc.iceConnectionState === 'connected' || pc.iceConnectionState === 'completed') {
+                clearTimeout(disconnectTimer);
             }
         };
         pc.onsignalingstatechange = () => console.log(`[RTC:${peerId}] signalingState=`, pc.signalingState);
@@ -1164,7 +1213,7 @@
             try { handleReceivedData(JSON.parse(event.data), peerId); }
             catch (e) { console.error(`[DC:${peerId}] bad message`, e, event.data); }
         };
-     }
+    }
 
     function onPlayerStateChange(event) {
         const state = event.data;
