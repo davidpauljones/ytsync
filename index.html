@@ -658,7 +658,21 @@
         if (partyId) {
             isHost = false;
             createInviteBtn.classList.add('hidden');
-            joinParty();
+            // Detect if you opened the guest link as the same signed-in user as the host
+            (async () => {
+                try {
+                    const partySnap = await db.collection('parties').doc(partyId).get();
+                    const hostIdFromDoc = partySnap.data()?.hostId;
+                    if (hostIdFromDoc && hostIdFromDoc === myAuthId) {
+                        console.warn('[JOIN] Same UID as host. Use a different browser profile/incognito for the guest.');
+                        alert('You are joining with the same account as the host. Open the invite in a different browser or an incognito window so the guest has a different UID.');
+                    }
+                } catch (e) {
+                    console.warn('Could not verify hostId before joining:', e);
+                } finally {
+                    joinParty();
+                }
+            })();
         } else {
             isHost = true;
             startHostHeartbeat();
@@ -861,6 +875,7 @@
 
         const pc = createPeerConnection('host');
         const candidateBuffer = [];
+        pc._answerApplied = false; // prevent duplicate setRemoteDescription
 
         // Keep refs on the pc for ICE restarts
         pc._guestDocRef = guestDocRef;
@@ -901,9 +916,11 @@
         guestDocRef.onSnapshot(async (snapshot) => {
             const data = snapshot.data();
             if (!data) return;
-            if (data.answer && !pc.currentRemoteDescription) {
+            // Apply the host's answer only once and only in have-local-offer state
+            if (data.answer && !pc._answerApplied && pc.signalingState === 'have-local-offer') {
                 try {
                     await pc.setRemoteDescription(new RTCSessionDescription(data.answer));
+                    pc._answerApplied = true;
                     console.log('[JOIN] Set remote description (answer) from host');
                     candidateBuffer.forEach(c => pc.addIceCandidate(new RTCIceCandidate(c)).catch(err => console.error('[JOIN] addIceCandidate (buffer) failed:', err)));
                     candidateBuffer.length = 0;
@@ -940,15 +957,17 @@
                 if (change.type === 'added') {
                     const { offer, name } = data;
                     console.log('[HOST] Guest added:', guestId, 'name:', name);
-                    if (peerConnections[guestId] || guestId === myAuthId) continue;
+                    // If someone joins with same UID as the host, refuse (they share auth state)
+                    if (guestId === myAuthId) {
+                        console.warn('[HOST] Ignoring guest with same UID as host. Use a different browser/incognito for guests.');
+                        continue;
+                    }
+                    if (peerConnections[guestId]) continue;
 
                     try {
                         const guestDocRef = doc.ref;
                         const pc = createPeerConnection(guestId, name);
-                        // store refs for restarts
                         pc._hostGuestDocRef = guestDocRef;
-                        pc._hostHostCandidatesRef = guestDocRef.collection('hostCandidates');
-                        pc._hostGuestCandidatesRef = guestDocRef.collection('guestCandidates');
 
                         pc.ondatachannel = event => {
                             console.log('[HOST] Data channel from guest', guestId);
@@ -959,7 +978,7 @@
                         pc.onicecandidate = async (event) => {
                             if (event.candidate) {
                                 try {
-                                    await pc._hostHostCandidatesRef.add(event.candidate.toJSON());
+                                    await guestDocRef.collection('hostCandidates').add(event.candidate.toJSON());
                                     console.log('[HOST] Sent host ICE candidate to', guestId);
                                 } catch (e) {
                                     console.error('[HOST] Failed to write host ICE candidate:', e);
@@ -977,7 +996,7 @@
                         await guestDocRef.update({ answer });
                         console.log('[HOST] Wrote answer for', guestId);
 
-                        pc._hostGuestCandidatesRef.onSnapshot(snap => {
+                        guestDocRef.collection('guestCandidates').onSnapshot(snap => {
                             snap.docChanges().forEach(ch => {
                                 if (ch.type === 'added') {
                                     const cand = ch.doc.data();
@@ -991,7 +1010,7 @@
                         console.error('[HOST] Error handling new guest', guestId, e);
                     }
                 } else if (change.type === 'modified') {
-                    // Handle ICE restart offers from guest
+                    // Handle ICE-restart offers from guest
                     try {
                         const pc = peerConnections[guestId];
                         if (!pc) continue;
@@ -1062,21 +1081,23 @@
     async function attemptGuestIceRestart(pc) {
         // Only guests restart toward the host
         if (isHost || pc.peerId !== 'host') return;
-        if (!pc._guestDocRef || !pc._guestGuestCandidatesRef || !pc._guestHostCandidatesRef) return;
+        if (!pc._guestDocRef) return;
         if (pc._iceRestartInProgress) {
             console.log('[JOIN] ICE restart already in progress; skipping.');
+            return;
+        }
+        if (pc.signalingState === 'closed') {
+            console.warn('[JOIN] ICE restart skipped; connection already closed.');
             return;
         }
         pc._iceRestartInProgress = true;
         try {
             console.log('[JOIN] Attempting ICE restart...');
-            // Clear old candidates to avoid glare
-            await clearCollection(pc._guestGuestCandidatesRef);
-            await clearCollection(pc._guestHostCandidatesRef);
+            // Do NOT clear candidate subcollections (avoid permission issues).
             // Create a new offer with iceRestart
             const offer = await pc.createOffer({ iceRestart: true });
             await pc.setLocalDescription(offer);
-            // Update the guest doc with the new offer; clear old answer so host will respond
+            // Clear old answer so host will respond with a fresh answer
             await pc._guestDocRef.update({
                 offer,
                 restartedAt: Date.now(),
