@@ -1040,7 +1040,6 @@
         pc.oniceconnectionstatechange = () => {
             console.log(`[RTC:${peerId}] iceConnectionState=`, pc.iceConnectionState);
             if (pc.iceConnectionState === 'disconnected') {
-                // Give it a moment to recover, then try restart on guest
                 clearTimeout(disconnectTimer);
                 disconnectTimer = setTimeout(() => {
                     if (pc.iceConnectionState === 'disconnected') {
@@ -1059,6 +1058,51 @@
         return pc;
     }
     
+    // Guest-side ICE restart helper
+    async function attemptGuestIceRestart(pc) {
+        // Only guests restart toward the host
+        if (isHost || pc.peerId !== 'host') return;
+        if (!pc._guestDocRef || !pc._guestGuestCandidatesRef || !pc._guestHostCandidatesRef) return;
+        if (pc._iceRestartInProgress) {
+            console.log('[JOIN] ICE restart already in progress; skipping.');
+            return;
+        }
+        pc._iceRestartInProgress = true;
+        try {
+            console.log('[JOIN] Attempting ICE restart...');
+            // Clear old candidates to avoid glare
+            await clearCollection(pc._guestGuestCandidatesRef);
+            await clearCollection(pc._guestHostCandidatesRef);
+            // Create a new offer with iceRestart
+            const offer = await pc.createOffer({ iceRestart: true });
+            await pc.setLocalDescription(offer);
+            // Update the guest doc with the new offer; clear old answer so host will respond
+            await pc._guestDocRef.update({
+                offer,
+                restartedAt: Date.now(),
+                answer: firebase.firestore.FieldValue.delete()
+            });
+            console.log('[JOIN] Wrote restart offer');
+        } catch (e) {
+            console.error('[JOIN] ICE restart failed:', e);
+        } finally {
+            pc._iceRestartInProgress = false;
+        }
+    }
+
+    // Utility: delete all docs in a subcollection (candidates)
+    async function clearCollection(colRef) {
+        try {
+            const snap = await colRef.get();
+            if (snap.empty) return;
+            const batch = db.batch();
+            snap.forEach(doc => batch.delete(doc.ref));
+            await batch.commit();
+        } catch (e) {
+            console.warn('clearCollection failed:', e);
+        }
+    }
+
     function resetPartyState() {
         console.log("Resetting party state...");
         for (const peerId in peerConnections) {
@@ -1439,7 +1483,7 @@
                     const nextVideo = videoQueue.shift();
                     hideUpNextOverlay();
                     broadcastData({ type: 'NEW_VIDEO', videoId: nextVideo.videoId, autoPlay: true });
-                    broadcastData({ type: 'QUEUE_UPDATE', queue: videoQueue });
+                                       broadcastData({ type: 'QUEUE_UPDATE', queue: videoQueue });
                     return;
                 }
                 const data = { type: 'TIME_UPDATE', time: player.getCurrentTime(), state: currentState };
