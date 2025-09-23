@@ -1040,6 +1040,11 @@
     }
 
     function createPeerConnection(peerId, peerName) {
+        if (hostMigrationInProgress) {
+            console.log('[RTC] Skipping connection creation during migration');
+            return null;
+        }
+        
         const pc = new RTCPeerConnection(rtcConfig);
         peerConnections[peerId] = pc;
         pc.peerName = peerName;
@@ -1051,18 +1056,19 @@
             console.log(`[RTC:${peerId}] connectionState=`, pc.connectionState);
             updateConnectionStatus();
             
-            if (pc.connectionState === 'failed') {
-                console.warn(`[RTC:${peerId}] DTLS failed. Attempting ICE restart (guest side only).`);
-                attemptGuestIceRestart(pc);
-            }
-            if (peerId === 'host' && !isHost) {
+            // Handle host disconnection more aggressively
+            if (peerId === 'host' && !isHost && !hostMigrationInProgress) {
                 const state = pc.connectionState;
-                if (state === 'disconnected' || state === 'failed' || state === 'closed') {
-                    console.warn(`Connection to host lost. State: ${state}`);
-                    if (!window.migrationInProgress && state !== 'disconnected') {
-                        window.migrationInProgress = true;
-                        handleHostDisconnection();
-                    }
+                
+                if (state === 'failed' || state === 'disconnected' || state === 'closed') {
+                    console.warn(`[RTC:host] Connection lost (${state}), starting migration`);
+                    
+                    // Start migration after a short delay to avoid race conditions
+                    setTimeout(() => {
+                        if (!hostMigrationInProgress && pc.connectionState !== 'connected') {
+                            handleHostDisconnection();
+                        }
+                    }, 1000);
                 }
             }
         };
@@ -1571,71 +1577,287 @@
     }
 
     async function handleHostDisconnection() {
-        resetPartyState(); 
-        console.log("Host disconnected. Starting election...");
-        connectionStatus.textContent = 'Status: Host disconnected, electing new host...';
-        connectionStatus.className = 'status connecting';
-        if (hostHeartbeatInterval) clearInterval(hostHeartbeatInterval);
-        
-        const remainingClientIds = Object.keys(localUserList);
-        if (!remainingClientIds.includes(myAuthId)) {
-            remainingClientIds.push(myAuthId);
-        }
-        remainingClientIds.sort();
-        
-        if (remainingClientIds.length === 0) {
-            console.log("Party is empty after host left.");
+        if (hostMigrationInProgress) {
+            console.log('[MIGRATION] Already in progress, ignoring duplicate call');
             return;
         }
         
-        const newHostId = remainingClientIds[0];
-        console.log("Election determined. New host should be:", newHostId);
-
-        if (myAuthId === newHostId) {
-            try {
-                const guestsSnapshot = await partyDocRef.collection('guests').get();
-                const batch = db.batch();
-                guestsSnapshot.docs.forEach(doc => batch.delete(doc.ref));
-                await batch.commit();
-                console.log("Cleared old guest list from Firestore.");
-
-                await partyDocRef.update({ hostId: myAuthId });
-                console.log("This client has successfully become the new host!");
-                isHost = true;
-                currentHostId = myAuthId;
-                updateUIForNewHost();
-                listenForGuests();
-                startHostHeartbeat();
-                broadcastData({ type: 'USER_LIST', users: localUserList });
-
-            } catch (error) {
-                console.error("Error trying to become host:", error);
-                alert("Could not elect new host. Please refresh the page.");
+        hostMigrationInProgress = true;
+        console.log('[MIGRATION] Host disconnected, starting election process...');
+        
+        // Update UI immediately
+        connectionStatus.textContent = 'Status: Host disconnected, electing new host...';
+        connectionStatus.className = 'status connecting';
+        
+        try {
+            // Step 1: Clean up all existing connections
+            await cleanupAllConnections();
+            
+            // Step 2: Determine if we should become host
+            const shouldBecomeHost = await determineNewHost();
+            
+            if (shouldBecomeHost) {
+                console.log('[MIGRATION] This client will become the new host');
+                await becomeNewHost();
+            } else {
+                console.log('[MIGRATION] Waiting for another client to become host');
+                await waitForNewHost();
             }
-        } else {
-            console.log("Waiting for the new host to take over.");
-            listenForNewHostAndReconnect();
+            
+        } catch (error) {
+            console.error('[MIGRATION] Host migration failed:', error);
+            // Fallback: refresh the page
+            alert('Host migration failed. The page will refresh to reconnect.');
+            window.location.reload();
         }
     }
 
-    function listenForNewHostAndReconnect() {
-        const unsubscribe = partyDocRef.onSnapshot(doc => {
-            if (!doc.exists) return;
-            const newHostId = doc.data().hostId;
-            if (newHostId && newHostId !== myAuthId && newHostId !== currentHostId) {
-                console.log(`New host detected (${newHostId}). Reconnecting...`);
-                unsubscribe();
-                currentHostId = newHostId;
-                joinParty();
+    // Step 1: Clean up all existing connections
+    async function cleanupAllConnections() {
+        console.log('[MIGRATION] Cleaning up existing connections');
+        
+        // Close all peer connections
+        for (const [peerId, pc] of Object.entries(peerConnections)) {
+            try {
+                pc.close();
+            } catch (e) {
+                console.warn('[MIGRATION] Error closing connection:', peerId, e);
             }
+            delete peerConnections[peerId];
+        }
+        
+        // Close all data channels
+        for (const [peerId, channel] of Object.entries(dataChannels)) {
+            try {
+                if (channel.readyState === 'open') {
+                    channel.close();
+                }
+            } catch (e) {
+                console.warn('[MIGRATION] Error closing channel:', peerId, e);
+            }
+            delete dataChannels[peerId];
+        }
+        
+        // Clear intervals
+        if (hostHeartbeatInterval) {
+            clearInterval(hostHeartbeatInterval);
+            hostHeartbeatInterval = null;
+        }
+        
+        // Reset connection state
+        isHost = false;
+        currentHostId = '';
+        
+        console.log('[MIGRATION] Cleanup complete');
+    }
+
+    // Step 2: Determine who should become the new host
+    async function determineNewHost() {
+        try {
+            // Get all connected users (including ourselves)
+            const allUsers = { ...localUserList };
+            if (!allUsers[myAuthId]) {
+                allUsers[myAuthId] = { name: myName };
+            }
+            
+            // Sort user IDs deterministically (alphabetical order)
+            const sortedUserIds = Object.keys(allUsers).sort();
+            
+            console.log('[MIGRATION] All users for election:', sortedUserIds);
+            console.log('[MIGRATION] My ID:', myAuthId);
+            
+            // The first user in sorted order becomes host
+            const newHostId = sortedUserIds[0];
+            
+            console.log('[MIGRATION] Elected host ID:', newHostId);
+            return newHostId === myAuthId;
+            
+        } catch (error) {
+            console.error('[MIGRATION] Error determining new host:', error);
+            // Fallback: always try to become host if we can't determine
+            return true;
+        }
+    }
+
+    // Step 3A: Become the new host
+    async function becomeNewHost() {
+        try {
+            console.log('[MIGRATION] Attempting to claim host role...');
+            
+            // Use a transaction to safely claim host role
+            await db.runTransaction(async (transaction) => {
+                const partyDoc = await transaction.get(partyDocRef);
+                
+                if (!partyDoc.exists) {
+                    throw new Error('Party document no longer exists');
+                }
+                
+                const currentData = partyDoc.data();
+                const currentHostId = currentData.hostId;
+                
+                // Only proceed if current host is different (avoid race conditions)
+                if (currentHostId === myAuthId) {
+                    console.log('[MIGRATION] Already the host, skipping');
+                    return;
+                }
+                
+                // Claim host role
+                transaction.update(partyDocRef, {
+                    hostId: myAuthId,
+                    migratedAt: firebase.firestore.FieldValue.serverTimestamp(),
+                    previousHostId: currentHostId
+                });
+                
+                console.log('[MIGRATION] Host role claimed in Firestore');
+            });
+            
+            // Clean up old guest documents
+            await cleanupOldGuestDocuments();
+            
+            // Update local state
+            isHost = true;
+            currentHostId = myAuthId;
+            
+            // Update UI
+            updateUIForNewHost();
+            
+            // Start host functionality
+            listenForGuests();
+            startHostHeartbeat();
+            
+            // Broadcast to any remaining connections
+            broadcastData({ 
+                type: 'HOST_INFO', 
+                hostId: myAuthId 
+            });
+            
+            broadcastData({ 
+                type: 'USER_LIST', 
+                users: localUserList 
+            });
+            
+            console.log('[MIGRATION] Successfully became new host');
+            hostMigrationInProgress = false;
+            updateConnectionStatus();
+            
+        } catch (error) {
+            console.error('[MIGRATION] Failed to become host:', error);
+            throw error;
+        }
+    }
+
+    // Step 3B: Wait for another client to become host
+    async function waitForNewHost() {
+        return new Promise((resolve, reject) => {
+            console.log('[MIGRATION] Waiting for new host...');
+            
+            // Set a timeout in case no one becomes host
+            const timeout = setTimeout(() => {
+                console.warn('[MIGRATION] Timeout waiting for new host');
+                unsubscribe();
+                reject(new Error('Timeout waiting for new host'));
+            }, 10000); // 10 second timeout
+            
+            // Listen for host changes
+            const unsubscribe = partyDocRef.onSnapshot(
+                (doc) => {
+                    if (!doc.exists) {
+                        console.error('[MIGRATION] Party document deleted');
+                        clearTimeout(timeout);
+                        unsubscribe();
+                        reject(new Error('Party document deleted'));
+                        return;
+                    }
+                    
+                    const data = doc.data();
+                    const newHostId = data.hostId;
+                    
+                    // Check if we have a new host (and it's not us)
+                    if (newHostId && newHostId !== myAuthId && newHostId !== currentHostId) {
+                        console.log('[MIGRATION] New host detected:', newHostId);
+                        
+                        clearTimeout(timeout);
+                        unsubscribe();
+                        
+                        // Update local state
+                        currentHostId = newHostId;
+                        
+                        // Reconnect as guest
+                        reconnectAsGuest()
+                            .then(() => {
+                                hostMigrationInProgress = false;
+                                resolve();
+                            })
+                            .catch(reject);
+                    }
+                },
+                (error) => {
+                    console.error('[MIGRATION] Error listening for new host:', error);
+                    clearTimeout(timeout);
+                    unsubscribe();
+                    reject(error);
+                }
+            );
         });
     }
 
+    // Reconnect to new host as guest
+    async function reconnectAsGuest() {
+        try {
+            console.log('[MIGRATION] Reconnecting as guest to new host');
+            
+            // Small delay to let new host initialize
+            await new Promise(resolve => setTimeout(resolve, 1000));
+            
+            // Join as guest
+            await joinParty();
+            
+            console.log('[MIGRATION] Successfully reconnected as guest');
+            updateConnectionStatus();
+            
+        } catch (error) {
+            console.error('[MIGRATION] Failed to reconnect as guest:', error);
+            throw error;
+        }
+    }
+
+    // Helper: Clean up old guest documents
+    async function cleanupOldGuestDocuments() {
+        try {
+            console.log('[MIGRATION] Cleaning up old guest documents');
+            
+            const guestsSnapshot = await partyDocRef.collection('guests').get();
+            
+            if (!guestsSnapshot.empty) {
+                const batch = db.batch();
+                guestsSnapshot.docs.forEach(doc => {
+                    batch.delete(doc.ref);
+                });
+                await batch.commit();
+                console.log('[MIGRATION] Cleared old guest documents');
+            }
+            
+        } catch (error) {
+            console.warn('[MIGRATION] Error cleaning guest documents:', error);
+            // Non-fatal error
+        }
+    }
+
+    // Update the existing updateUIForNewHost function
     function updateUIForNewHost() {
+        // Show create invite button again
         createInviteBtn.classList.remove('hidden');
-        createInviteBtn.disabled = true;
+        createInviteBtn.disabled = false;
+        createInviteBtn.textContent = 'Create Invite Link';
+        
+        // Hide existing invite link
+        inviteRow.classList.add('hidden');
+        inviteLinkInput.value = '';
+        
+        // Update user list
         updateUserList(localUserList);
-        updateConnectionStatus();
+        
+        console.log('[MIGRATION] UI updated for new host');
     }
 
     function updateVideoTitle() {
