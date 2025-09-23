@@ -468,7 +468,7 @@
     const rtcConfig = {
         iceServers: [
             { urls: ['stun:stun.l.google.com:19302','stun:stun1.l.google.com:19302','stun:stun2.l.google.com:19302'] },
-            // Add TURN servers (CRITICAL for production)
+            // Multiple TURN servers for redundancy
             { 
                 urls: 'turn:openrelay.metered.ca:80',
                 username: 'openrelayproject',
@@ -478,9 +478,16 @@
                 urls: 'turn:openrelay.metered.ca:443',
                 username: 'openrelayproject', 
                 credential: 'openrelayproject'
+            },
+            // Add Twilio's free TURN (backup)
+            {
+                urls: 'turn:global.turn.twilio.com:3478?transport=udp',
+                username: 'f94fdccef3c0a336f64a524c75ac89a04d50b7e46f3b3e0b2db7c7bb10e5a64b',
+                credential: 'vJfJkLbfSwF9T7Y5PzPXIqzCzUOdCgYj8p0nGHJGP84='
             }
         ],
-        iceCandidatePoolSize: 2,
+        iceCandidatePoolSize: 10, // Increase for faster gathering
+        iceTransportPolicy: 'all' // Use both STUN and TURN
     };
 
     // Helpful mapping for logging YT state numbers
@@ -907,13 +914,32 @@
 
         const guestCandidatesRef = pc._guestGuestCandidatesRef;
 
+        let candidateQueue = [];
+        let candidateTimer = null;
+
         pc.onicecandidate = async (event) => {
             if (event.candidate) {
-                try {
-                    await guestCandidatesRef.add(event.candidate.toJSON());
-                    console.log('[JOIN] Sent guest ICE candidate');
-                } catch (e) {
-                    console.error('[JOIN] Failed to write guest ICE candidate:', e);
+                candidateQueue.push(event.candidate.toJSON());
+                
+                // Batch candidates to reduce Firestore writes
+                if (!candidateTimer) {
+                    candidateTimer = setTimeout(async () => {
+                        if (candidateQueue.length > 0) {
+                            try {
+                                const batch = db.batch();
+                                candidateQueue.forEach(candidate => {
+                                    const docRef = guestCandidatesRef.doc();
+                                    batch.set(docRef, candidate);
+                                });
+                                await batch.commit();
+                                console.log(`[JOIN] Sent ${candidateQueue.length} guest ICE candidates`);
+                                candidateQueue = [];
+                            } catch (e) {
+                                console.error('[JOIN] Failed to write guest ICE candidates:', e);
+                            }
+                        }
+                        candidateTimer = null;
+                    }, 500); // Batch every 500ms
                 }
             } else {
                 console.log('[JOIN] ICE gathering complete');
@@ -1060,6 +1086,17 @@
         pc.onconnectionstatechange = () => {
             console.log(`[RTC:${peerId}] connectionState=`, pc.connectionState);
             updateConnectionStatus();
+            
+            // Add connection timeout for stuck connections
+            if (pc.connectionState === 'connecting') {
+                setTimeout(() => {
+                    if (pc.connectionState === 'connecting') {
+                        console.warn(`[RTC:${peerId}] Connection timeout after 15s`);
+                        attemptGuestIceRestart(pc);
+                    }
+                }, 15000);
+            }
+            
             if (pc.connectionState === 'failed') {
                 console.warn(`[RTC:${peerId}] DTLS failed. Attempting ICE restart (guest side only).`);
                 attemptGuestIceRestart(pc);
@@ -1467,7 +1504,7 @@
                     const timeDifference = Math.abs(localTime - data.time);
                     if (data.state === YT.PlayerState.PLAYING && (localState !== YT.PlayerState.PLAYING || timeDifference > 3.5)) {
                         const currentDuration = player.getDuration();
-                        if (officialVideoDuration > 0 && Math.abs(currentDuration - officialVideoDuration) > 2) {
+                        if (officialVideoDuration >  0 && Math.abs(currentDuration - officialVideoDuration) > 2) {
                             break;
                         }
                         isSyncingFromHost = true;
