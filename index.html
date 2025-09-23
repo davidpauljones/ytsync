@@ -1286,6 +1286,11 @@ let pendingMessages = [];
 let loadingNewVideo = false;
 
     function handleUserAction(data) {
+        // Clear sync flag for any user-initiated action
+        if (data.userInitiated) {
+            isSyncingFromHost = false;
+        }
+        
         if (isHost) {
             broadcastData(data);
         } else {
@@ -1297,6 +1302,17 @@ let loadingNewVideo = false;
         if (isHost) return;
 
         if (data.type === 'STATE_CHANGE') {
+            // Check if we should suppress this state change due to recent sync from host
+            if (isSyncingFromHost && !data.userInitiated) {
+                console.log('[DATA] Suppressing non-user state change during host sync');
+                // Reset sync flag after a short delay to allow user actions
+                setTimeout(() => {
+                    isSyncingFromHost = false;
+                    console.log('[DATA] Reset isSyncingFromHost flag');
+                }, 2000);
+                return;
+            }
+
             // Do not forward pauses caused by hidden tab (not user initiated)
             if ((data.state === YT.PlayerState.PAUSED || data.state === YT.PlayerState.ENDED) &&
                 document.hidden && !data.userInitiated) {
@@ -1328,6 +1344,12 @@ let loadingNewVideo = false;
                     }
                 }
             }
+        }
+
+        // If this is a user-initiated action, reset the sync flag
+        if (data.userInitiated) {
+            isSyncingFromHost = false;
+            console.log('[DATA] Reset isSyncingFromHost due to user action');
         }
 
         const requestData = { ...data, type: `REQUEST_${data.type}` };
@@ -1500,9 +1522,9 @@ let loadingNewVideo = false;
         const commandData = { ...data, type: data.type.replace('REQUEST_', '') };
         // Apply the command to host's own player first
         handleReceivedData(commandData, 'local');
-        // Then broadcast to ALL guests (including the sender for consistency)
+        // Then broadcast to OTHER guests (exclude the sender to prevent echo)
         Object.entries(dataChannels).forEach(([id, channel]) => {
-            if (id !== 'host' && channel && channel.readyState === 'open') {
+            if (id !== senderId && id !== 'host' && channel && channel.readyState === 'open') {
                 channel.send(JSON.stringify(commandData));
             }
         });
@@ -1548,20 +1570,36 @@ let loadingNewVideo = false;
                     console.log('[DATA] Player not ready for NEW_VIDEO, skipping');
                     return;
                 }
+                
+                // Check if this is from our own request (avoid double processing)
+                const currentVideoData = player.getVideoData();
+                if (currentVideoData && currentVideoData.video_id === data.videoId) {
+                    console.log('[DATA] NEW_VIDEO already loaded locally, updating sync state only');
+                    currentVideoId = data.videoId;
+                    if (data.autoPlay && player.getPlayerState() !== YT.PlayerState.PLAYING) {
+                        player.playVideo();
+                    }
+                    return;
+                }
+                
+                console.log('[DATA] Loading NEW_VIDEO from remote:', data.videoId);
                 isSyncingFromHost = true;
                 loadingNewVideo = true; // Set flag to prevent ad detection
                 officialVideoDuration = 0;
                 currentVideoId = data.videoId;
                 hideUpNextOverlay();
                 updateVideoTitle(); // Update title immediately
-                if (player.getVideoData()?.video_id !== data.videoId) {
-                    if (isHost && data.autoPlay) {
-                        intentToAutoPlay = true;
-                    }
-                    player.loadVideoById(data.videoId);
-                } else if (data.autoPlay) {
-                    player.playVideo();
+                
+                // Set timeout to reset sync flag
+                setTimeout(() => {
+                    isSyncingFromHost = false;
+                    loadingNewVideo = false;
+                }, 5000);
+                
+                if (isHost && data.autoPlay) {
+                    intentToAutoPlay = true;
                 }
+                player.loadVideoById(data.videoId);
                 break;
             case 'STATE_CHANGE': {
                 // Additional safety check
@@ -1569,8 +1607,28 @@ let loadingNewVideo = false;
                     console.log('[DATA] Player not ready for STATE_CHANGE, skipping');
                     return;
                 }
+                
+                // If we're loading a new video, be more lenient with sync
+                if (loadingNewVideo) {
+                    console.log('[DATA] Applying state change during video loading:', data.state);
+                    lastPlayerState = data.state;
+                    if (data.state === YT.PlayerState.PLAYING) {
+                        player.playVideo();
+                        loadingNewVideo = false; // Clear flag once playing
+                    } else if (data.state === YT.PlayerState.PAUSED) {
+                        player.pauseVideo();
+                    }
+                    return;
+                }
+                
                 isSyncingFromHost = true;
                 lastPlayerState = data.state;
+                
+                // Set a timeout to reset the sync flag
+                setTimeout(() => {
+                    isSyncingFromHost = false;
+                }, 1500);
+                
                 if (data.state === YT.PlayerState.PLAYING) {
                     const timeDifference = Math.abs(player.getCurrentTime() - data.time);
                     if (timeDifference > 1.5) {
