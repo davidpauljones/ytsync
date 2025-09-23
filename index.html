@@ -977,8 +977,20 @@
         const currentDuration = player.getDuration();
         const now = Date.now();
         
-        // Skip if we just tried to recover (prevent spam)
-        if (now - lastAdSkipTime < 3000) return;
+        // Global recovery throttling - prevent too many recovery attempts in session
+        if (totalRecoveryAttempts >= 10) {
+            console.log('[GUEST-AD] Too many recovery attempts this session, backing off');
+            return;
+        }
+        
+        // Skip if we just tried to recover (prevent spam) - increased throttle
+        if (now - lastAdSkipTime < 5000) return;
+        
+        // Also throttle based on when we last attempted any recovery
+        if (now - lastRecoveryTime < 10000) {
+            console.log('[GUEST-AD] Recent recovery attempt, waiting longer...');
+            return;
+        }
         
         console.log(`[GUEST-AD] Checking recovery: state=${YT_STATE[playerState]}, duration=${currentDuration}s`);
         
@@ -986,8 +998,8 @@
         let adDetected = false;
         let reason = '';
         
-        // Scenario 1: Player stuck in UNSTARTED state
-        if (playerState === YT.PlayerState.UNSTARTED && currentVideoId) {
+        // Scenario 1: Player stuck in UNSTARTED state (but be more careful)
+        if (playerState === YT.PlayerState.UNSTARTED && currentVideoId && totalRecoveryAttempts < 5) {
             adDetected = true;
             reason = 'stuck in UNSTARTED state with video ID';
         }
@@ -1015,15 +1027,17 @@
             reason = `short duration ${currentDuration}s in non-playing state`;
         }
         
-        // Scenario 4: Expected sync but player not responding
+        // Scenario 5: Expected sync but player not responding (only if we haven't tried much)
         if (officialVideoDuration > 0 && currentDuration > 0 && 
-            Math.abs(currentDuration - officialVideoDuration) > 30) {
+            Math.abs(currentDuration - officialVideoDuration) > 30 && totalRecoveryAttempts < 3) {
             adDetected = true;
             reason = `major duration mismatch: ${currentDuration}s vs expected ${officialVideoDuration}s`;
         }
         
         if (adDetected) {
             console.log(`[GUEST-AD] Ad/loading issue detected: ${reason}`);
+            totalRecoveryAttempts++;
+            lastRecoveryTime = now;
             attemptGuestRecovery();
         }
     }
@@ -1035,47 +1049,91 @@
         
         console.log(`[GUEST-AD] Attempting recovery (attempt ${adSkipAttempts})`);
         
-        // Method 1: Try to skip ads first
+        // Method 1: Try to skip ads using skip buttons
         const skipButton = document.querySelector('.ytp-ad-skip-button, .ytp-skip-ad-button, .ytp-ad-skip-button-modern');
         if (skipButton && skipButton.offsetParent !== null) {
             console.log('[GUEST-AD] Found skip button, clicking');
             skipButton.click();
+            // Wait a bit to see if skip worked before trying other methods
+            setTimeout(() => {
+                if (player.getPlayerState() === YT.PlayerState.UNSTARTED) {
+                    console.log('[GUEST-AD] Skip button didn\'t work, trying other methods');
+                    attemptAdvancedAdSkip();
+                }
+            }, 2000);
             return;
         }
         
-        // Method 2: Try to seek past ads
-        if (player && typeof player.getDuration === 'function') {
-            const duration = player.getDuration();
-            if (duration > 0 && duration < 120) {
-                console.log('[GUEST-AD] Seeking to end of short video (likely ad)');
-                player.seekTo(duration - 0.1, true);
-                return;
-            }
+        // Method 2: Try alternative ad skipping methods
+        attemptAdvancedAdSkip();
+    }
+    
+    function attemptAdvancedAdSkip() {
+        const duration = player ? player.getDuration() : 0;
+        const currentTime = player ? player.getCurrentTime() : 0;
+        
+        // Method 1: Try seeking past short ads (but be more careful)
+        if (duration > 0 && duration < 60 && currentTime < duration - 1) {
+            console.log('[GUEST-AD] Seeking to end of short ad');
+            player.seekTo(duration - 0.5, true);
+            return;
         }
         
-        // Method 3: Force reload the correct video
-        if (currentVideoId && adSkipAttempts >= 2) {
-            console.log('[GUEST-AD] Force reloading video for recovery');
-            
-            // Calculate expected time based on when sync should be
-            let expectedTime = 0;
-            if (officialVideoDuration > 0) {
-                // Estimate based on how long the video has been playing
-                expectedTime = Math.min(5, officialVideoDuration * 0.1); // Conservative estimate
-            }
-            
-            player.loadVideoById(currentVideoId, expectedTime);
-            adSkipAttempts = 0; // Reset after reload
-            
-            // Request fresh sync from host
-            setTimeout(() => {
-                const requestData = { type: 'REQUEST_POSITION' };
-                const hostChannel = dataChannels['host'];
-                if (hostChannel && hostChannel.readyState === 'open') {
-                    hostChannel.send(JSON.stringify(requestData));
-                    console.log('[GUEST-AD] Requested fresh sync after recovery');
+        // Method 2: Try the YouTube HTML5 API to skip ads
+        try {
+            if (typeof window.ytInitialPlayerResponse !== 'undefined') {
+                // Try to trigger ad skip through YouTube's internal API
+                const iframe = document.querySelector('#player iframe');
+                if (iframe && iframe.contentWindow) {
+                    // Try to send skip command to iframe
+                    iframe.contentWindow.postMessage('{"event":"command","func":"skipAd","args":""}', '*');
+                    console.log('[GUEST-AD] Sent skip command to player iframe');
+                    return;
                 }
-            }, 2000);
+            }
+        } catch (e) {
+            console.log('[GUEST-AD] Could not access YouTube skip API');
+        }
+        
+        // Method 3: Try pressing ESC key to close ad overlay
+        try {
+            const escEvent = new KeyboardEvent('keydown', {
+                key: 'Escape',
+                code: 'Escape',
+                keyCode: 27,
+                which: 27,
+                bubbles: true
+            });
+            document.dispatchEvent(escEvent);
+            console.log('[GUEST-AD] Sent ESC key to close ad overlay');
+        } catch (e) {
+            console.log('[GUEST-AD] Could not send ESC key');
+        }
+        
+        // Method 4: LAST RESORT - Reload video only after many failed attempts and with backoff
+        if (adSkipAttempts >= 5 && currentVideoId) {
+            console.log('[GUEST-AD] Last resort: reloading video after multiple skip failures');
+            
+            // Add exponential backoff to prevent rapid reloading
+            const backoffDelay = Math.min(5000 + (adSkipAttempts * 2000), 15000);
+            
+            setTimeout(() => {
+                // Only reload if we're still stuck
+                if (player.getPlayerState() === YT.PlayerState.UNSTARTED) {
+                    player.loadVideoById(currentVideoId, 0);
+                    
+                    // Reset attempts and request sync after a longer delay
+                    setTimeout(() => {
+                        adSkipAttempts = 0;
+                        const requestData = { type: 'REQUEST_POSITION' };
+                        const hostChannel = dataChannels['host'];
+                        if (hostChannel && hostChannel.readyState === 'open') {
+                            hostChannel.send(JSON.stringify(requestData));
+                            console.log('[GUEST-AD] Requested fresh sync after forced reload');
+                        }
+                    }, 3000);
+                }
+            }, backoffDelay);
         }
     }
 
@@ -1772,6 +1830,8 @@ let isManualPause = false;
 let guestTimePositions = {}; // Track guest positions for reverse sync
 let adSkipAttempts = 0; // Track ad skip attempts
 let lastAdSkipTime = 0; // Prevent spam clicking
+let totalRecoveryAttempts = 0; // Global counter to prevent infinite recovery loops
+let lastRecoveryTime = 0; // Track when last recovery was attempted
 
     function handleUserAction(data) {
         // Clear sync flag for any user-initiated action
@@ -2027,6 +2087,13 @@ let lastAdSkipTime = 0; // Prevent spam clicking
         } else if (state === YT.PlayerState.PLAYING) {
             isManualPause = false;
             console.log('[YT] Video playing, clearing manual pause flag');
+            
+            // Reset recovery counters when video successfully starts playing
+            if (!isHost && (totalRecoveryAttempts > 0 || adSkipAttempts > 0)) {
+                console.log('[GUEST-AD] Video playing successfully, resetting recovery counters');
+                totalRecoveryAttempts = 0;
+                adSkipAttempts = 0;
+            }
             
             // Host ad/buffer recovery detection
             if (isHost && player) {
