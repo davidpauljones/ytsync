@@ -467,27 +467,10 @@
     // WebRTC configuration (add TURN here for reliability)
     const rtcConfig = {
         iceServers: [
-            { urls: ['stun:stun.l.google.com:19302','stun:stun1.l.google.com:19302','stun:stun2.l.google.com:19302'] },
-            // Multiple TURN servers for redundancy
-            { 
-                urls: 'turn:openrelay.metered.ca:80',
-                username: 'openrelayproject',
-                credential: 'openrelayproject'
-            },
-            {
-                urls: 'turn:openrelay.metered.ca:443',
-                username: 'openrelayproject', 
-                credential: 'openrelayproject'
-            },
-            // Add Twilio's free TURN (backup)
-            {
-                urls: 'turn:global.turn.twilio.com:3478?transport=udp',
-                username: 'f94fdccef3c0a336f64a524c75ac89a04d50b7e46f3b3e0b2db7c7bb10e5a64b',
-                credential: 'vJfJkLbfSwF9T7Y5PzPXIqzCzUOdCgYj8p0nGHJGP84='
-            }
+            { urls: ['stun:stun.l.google.com:19302','stun:stun1.l.google.com:19302','stun:stun2.l.google.com:19302'] }
         ],
-        iceCandidatePoolSize: 10, // Increase for faster gathering
-        iceTransportPolicy: 'all' // Use both STUN and TURN
+        iceCandidatePoolSize: 2,
+        iceTransportPolicy: 'all'
     };
 
     // Helpful mapping for logging YT state numbers
@@ -901,7 +884,7 @@
 
         const pc = createPeerConnection('host');
         const candidateBuffer = [];
-        pc._answerApplied = false; // prevent duplicate setRemoteDescription
+        let candidateTimer = null;
 
         // Keep refs on the pc for ICE restarts
         pc._guestDocRef = guestDocRef;
@@ -914,32 +897,13 @@
 
         const guestCandidatesRef = pc._guestGuestCandidatesRef;
 
-        let candidateQueue = [];
-        let candidateTimer = null;
-
         pc.onicecandidate = async (event) => {
             if (event.candidate) {
-                candidateQueue.push(event.candidate.toJSON());
-                
-                // Batch candidates to reduce Firestore writes
-                if (!candidateTimer) {
-                    candidateTimer = setTimeout(async () => {
-                        if (candidateQueue.length > 0) {
-                            try {
-                                const batch = db.batch();
-                                candidateQueue.forEach(candidate => {
-                                    const docRef = guestCandidatesRef.doc();
-                                    batch.set(docRef, candidate);
-                                });
-                                await batch.commit();
-                                console.log(`[JOIN] Sent ${candidateQueue.length} guest ICE candidates`);
-                                candidateQueue = [];
-                            } catch (e) {
-                                console.error('[JOIN] Failed to write guest ICE candidates:', e);
-                            }
-                        }
-                        candidateTimer = null;
-                    }, 500); // Batch every 500ms
+                try {
+                    await guestCandidatesRef.add(event.candidate.toJSON());
+                    console.log('[JOIN] Sent guest ICE candidate');
+                } catch (e) {
+                    console.error('[JOIN] Failed to write guest ICE candidate:', e);
                 }
             } else {
                 console.log('[JOIN] ICE gathering complete');
@@ -1086,16 +1050,6 @@
         pc.onconnectionstatechange = () => {
             console.log(`[RTC:${peerId}] connectionState=`, pc.connectionState);
             updateConnectionStatus();
-            
-            // Add connection timeout for stuck connections
-            if (pc.connectionState === 'connecting') {
-                setTimeout(() => {
-                    if (pc.connectionState === 'connecting') {
-                        console.warn(`[RTC:${peerId}] Connection timeout after 15s`);
-                        attemptGuestIceRestart(pc);
-                    }
-                }, 15000);
-            }
             
             if (pc.connectionState === 'failed') {
                 console.warn(`[RTC:${peerId}] DTLS failed. Attempting ICE restart (guest side only).`);
@@ -1507,10 +1461,7 @@
                         if (officialVideoDuration >  0 && Math.abs(currentDuration - officialVideoDuration) > 2) {
                             break;
                         }
-                        isSyncingFromHost = true;
-                        player.seekTo(data.time, true);
-                        player.playVideo();
-                    } 
+ }
                     else if (data.state === YT.PlayerState.PAUSED && localState !== YT.PlayerState.PAUSED) {
                         console.log("Heartbeat correcting to PAUSED state.");
                         isSyncingFromHost = true;
@@ -1533,7 +1484,7 @@
                 break;
             case 'REMOVE_FROM_QUEUE':
                 if (isHost) {
-                    videoQueue.splice(data.index, 1);
+                    videoQueue.splice(data.index,  1);
                     broadcastData({ type: 'QUEUE_UPDATE', queue: videoQueue });
                 }
                 break;
