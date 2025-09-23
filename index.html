@@ -1080,11 +1080,17 @@
             updateConnectionStatus();
             
             // Handle host disconnection more aggressively
-            if (peerId === 'host' && !isHost && !hostMigrationInProgress) {
+            if (peerId === 'host' && !isHost) {
                 const state = pc.connectionState;
                 
                 if (state === 'failed' || state === 'disconnected' || state === 'closed') {
                     console.warn(`[RTC:host] Connection lost (${state}), starting migration`);
+                    
+                    // Reset migration flag if it was stuck
+                    if (hostMigrationInProgress) {
+                        console.warn('[MIGRATION] Resetting stuck migration flag');
+                        hostMigrationInProgress = false;
+                    }
                     
                     // Start migration after a short delay to avoid race conditions
                     setTimeout(() => {
@@ -1315,7 +1321,7 @@ let hostElectionLock = null;
     function configureDataChannel(peerId, channel, peerName = '') {
         channel.onopen = () => {
             console.log(`[DC:${peerId}] open`);
-            window.migrationInProgress = false;
+            hostMigrationInProgress = false; // Changed from window.migrationInProgress
             updateConnectionStatus();
             if (isHost) {
                 const users = { [myAuthId]: { name: myName } };
@@ -1334,17 +1340,29 @@ let hostElectionLock = null;
         };
         channel.onclose = () => {
             console.log(`[DC:${peerId}] close`);
-            if (peerId === 'host' && !isHost && !window.migrationInProgress) {
-                window.migrationInProgress = true;
-                handleHostDisconnection();
+            
+            if (peerId === 'host' && !isHost) {
+                console.warn('[DC:host] Host data channel closed');
+                
+                // Only trigger migration if not already in progress and we haven't become host
+                if (!hostMigrationInProgress && !isHost) {
+                    console.log('[DC:host] Triggering host migration from data channel close');
+                    hostMigrationInProgress = true;
+                    setTimeout(() => handleHostDisconnection(), 500);
+                }
                 return;
             }
+            
             if (isHost && partyDocRef) {
-                partyDocRef.collection('guests').doc(peerId).delete().catch(error => console.error("Error removing guest document:", error));
+                partyDocRef.collection('guests').doc(peerId).delete().catch(error => 
+                    console.error("Error removing guest document:", error)
+                );
             }
+            
             delete peerConnections[peerId];
             delete dataChannels[peerId];
             updateConnectionStatus();
+            
             if (isHost) {
                 const users = { [myAuthId]: { name: myName } };
                 Object.entries(peerConnections).forEach(([id, pc]) => {
@@ -1477,6 +1495,7 @@ let hostElectionLock = null;
                     isSyncingFromHost = true;
                     if (data.state === YT.PlayerState.PLAYING) player.playVideo();
                     else if (data.state === YT.PlayerState.PAUSED) player.pauseVideo();
+
                 }, 1000);
                 videoQueue = data.queue;
                 updateQueueUI();
@@ -1686,6 +1705,12 @@ let hostElectionLock = null;
         hostMigrationInProgress = true;
         console.log('[MIGRATION] Host disconnected, starting election process...');
         
+        // Set a safety timeout to reset migration flag if it gets stuck
+        const migrationTimeout = setTimeout(() => {
+            console.warn('[MIGRATION] Migration timeout - resetting flag');
+            hostMigrationInProgress = false;
+        }, 15000);
+        
         // Update UI immediately
         connectionStatus.textContent = 'Status: Host disconnected, electing new host...';
         connectionStatus.className = 'status connecting';
@@ -1705,8 +1730,13 @@ let hostElectionLock = null;
                 await waitForNewHost();
             }
             
+            clearTimeout(migrationTimeout);
+            
         } catch (error) {
             console.error('[MIGRATION] Host migration failed:', error);
+            clearTimeout(migrationTimeout);
+            hostMigrationInProgress = false;
+            
             // Fallback: refresh the page
             alert('Host migration failed. The page will refresh to reconnect.');
             window.location.reload();
