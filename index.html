@@ -823,17 +823,47 @@
         // Skip if we just tried to skip (prevent spam)
         if (now - lastAdSkipTime < 2000) return;
         
-        // Ad detection criteria:
-        // 1. Duration is significantly different from expected (officialVideoDuration)
-        // 2. We have an expected duration (not a new video)
-        // 3. Current duration suggests an ad (typically 15-30 seconds for ads vs 3+ minutes for content)
-        const hasExpectedDuration = officialVideoDuration > 0;
-        const durationMismatch = Math.abs(currentDuration - officialVideoDuration) > 10;
-        const likelyAd = currentDuration > 0 && currentDuration < 120; // Ads are usually under 2 minutes
-        const contentVideo = officialVideoDuration > 120; // Content is usually over 2 minutes
+        // Enhanced ad detection criteria:
+        let adDetected = false;
+        let reason = '';
         
-        if (hasExpectedDuration && durationMismatch && likelyAd && contentVideo) {
-            console.log(`[AD-SKIP] Detected ad: duration ${currentDuration}s vs expected ${officialVideoDuration}s`);
+        // Method 1: Duration comparison (if we have expected duration)
+        if (officialVideoDuration > 0) {
+            const hasExpectedDuration = officialVideoDuration > 0;
+            const durationMismatch = Math.abs(currentDuration - officialVideoDuration) > 10;
+            const likelyAd = currentDuration > 0 && currentDuration < 120;
+            const contentVideo = officialVideoDuration > 120;
+            
+            if (hasExpectedDuration && durationMismatch && likelyAd && contentVideo) {
+                adDetected = true;
+                reason = `duration mismatch: ${currentDuration}s vs expected ${officialVideoDuration}s`;
+            }
+        }
+        
+        // Method 2: Ad indicators in DOM (more aggressive)
+        const adIndicators = [
+            '.ytp-ad-skip-button',
+            '.ytp-skip-ad-button',
+            '.ytp-ad-skip-button-modern',
+            '.ytp-ad-overlay-container',
+            '.ytp-ad-text',
+            '.ytp-ad-player-overlay'
+        ];
+        
+        const hasAdIndicator = adIndicators.some(selector => document.querySelector(selector));
+        if (hasAdIndicator) {
+            adDetected = true;
+            reason = 'DOM ad indicators found';
+        }
+        
+        // Method 3: Very short durations are likely ads (even without officialVideoDuration)
+        if (currentDuration > 0 && currentDuration <= 30 && currentTime < 25) {
+            adDetected = true;
+            reason = `very short duration: ${currentDuration}s (likely ad)`;
+        }
+        
+        if (adDetected) {
+            console.log(`[AD-SKIP] Detected ad: ${reason}`);
             attemptAdSkip();
         }
     }
@@ -885,6 +915,41 @@
         }
         
         return 0;
+    }
+    
+    // Timer-based ad detection for stuck loading states
+    let adDetectionTimer = null;
+    
+    function startAdDetectionTimer() {
+        // Clear any existing timer
+        if (adDetectionTimer) {
+            clearInterval(adDetectionTimer);
+        }
+        
+        // Start checking for ads every 3 seconds during loading
+        adDetectionTimer = setInterval(() => {
+            if (isHost && player) {
+                const state = player.getPlayerState();
+                // Check for ads if we're stuck in buffering or unstarted state
+                if (state === YT.PlayerState.BUFFERING || state === YT.PlayerState.UNSTARTED) {
+                    console.log('[AD-DETECT] Timer check during loading state:', YT_STATE[state]);
+                    checkAndSkipAds();
+                } else if (state === YT.PlayerState.PLAYING) {
+                    // Stop timer when video is playing normally
+                    clearInterval(adDetectionTimer);
+                    adDetectionTimer = null;
+                }
+            }
+        }, 3000);
+        
+        // Clear timer after 30 seconds max
+        setTimeout(() => {
+            if (adDetectionTimer) {
+                clearInterval(adDetectionTimer);
+                adDetectionTimer = null;
+                console.log('[AD-DETECT] Timer cleared after 30 seconds');
+            }
+        }, 30000);
     }
 
     // Enhanced TIME_UPDATE handling for ad detection
@@ -1528,6 +1593,11 @@ let lastAdSkipTime = 0; // Prevent spam clicking
             if (player && typeof player.loadVideoById === 'function') {
                 player.loadVideoById(data.videoId);
                 
+                // Start ad detection timer for hosts
+                if (isHost) {
+                    startAdDetectionTimer();
+                }
+                
                 // Process any buffered messages after a short delay to allow video to load
                 setTimeout(() => {
                     processPendingMessages();
@@ -1733,7 +1803,13 @@ let lastAdSkipTime = 0; // Prevent spam clicking
             }
         } catch (_) {}
 
-        // Ignore pure buffering
+        // Enhanced ad detection during buffering for hosts
+        if (state === YT.PlayerState.BUFFERING && isHost && player) {
+            console.log('[AD-DETECT] Checking for ads during buffering state');
+            checkAndSkipAds();
+        }
+
+        // Ignore pure buffering (but after ad check above)
         if (state === YT.PlayerState.BUFFERING) return;
 
         // Suppress duplicate states EXCEPT allow ENDED to still propagate once (overlay handled above)
@@ -1855,6 +1931,11 @@ let lastAdSkipTime = 0; // Prevent spam clicking
                 officialVideoDuration = data.duration;
                 if (player.getVideoData()?.video_id !== data.videoId) {
                     player.loadVideoById(data.videoId, data.time);
+                    
+                    // Start ad detection timer for hosts during INITIAL_SYNC
+                    if (isHost) {
+                        startAdDetectionTimer();
+                    }
                 } else {
                     player.seekTo(data.time, true);
                 }
@@ -1916,6 +1997,11 @@ let lastAdSkipTime = 0; // Prevent spam clicking
                     intentToAutoPlay = true;
                 }
                 player.loadVideoById(data.videoId);
+                
+                // Start ad detection timer for hosts loading new videos
+                if (isHost) {
+                    startAdDetectionTimer();
+                }
                 break;
             case 'STATE_CHANGE': {
                 // Additional safety check
