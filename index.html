@@ -811,6 +811,52 @@
             }
         }, 1000); // Check every second
     }
+    
+    // Utility function to detect if player controls are hidden (indicating ads)
+    function arePlayerControlsHidden() {
+        try {
+            // Check multiple control elements
+            const controlSelectors = [
+                '.ytp-chrome-bottom',
+                '.ytp-chrome-controls', 
+                '.ytp-progress-bar-container',
+                '.ytp-progress-bar',
+                '.ytp-play-button',
+                '.ytp-time-display'
+            ];
+            
+            let hiddenCount = 0;
+            let totalChecked = 0;
+            
+            controlSelectors.forEach(selector => {
+                const element = document.querySelector(selector);
+                if (element) {
+                    totalChecked++;
+                    const computed = window.getComputedStyle(element);
+                    const isHidden = (
+                        element.style.display === 'none' ||
+                        element.style.visibility === 'hidden' ||
+                        element.style.opacity === '0' ||
+                        computed.display === 'none' ||
+                        computed.visibility === 'hidden' ||
+                        computed.opacity === '0'
+                    );
+                    
+                    if (isHidden) {
+                        hiddenCount++;
+                    }
+                }
+            });
+            
+            // If more than half the controls are hidden, likely an ad
+            const hiddenPercentage = totalChecked > 0 ? hiddenCount / totalChecked : 0;
+            return hiddenPercentage > 0.5;
+            
+        } catch (error) {
+            console.warn('[AD-DETECT] Error checking control visibility:', error);
+            return false;
+        }
+    }
 
     // Enhanced ad detection and skipping system
     function checkAndSkipAds() {
@@ -856,7 +902,13 @@
             reason = 'DOM ad indicators found';
         }
         
-        // Method 3: Very short durations are likely ads (even without officialVideoDuration)
+        // Method 3: Player controls visibility check (excellent ad detection!)
+        if (arePlayerControlsHidden() && currentDuration > 0) {
+            adDetected = true;
+            reason = 'player controls hidden (ad overlay detected)';
+        }
+        
+        // Method 4: Very short durations are likely ads (even without officialVideoDuration)
         if (currentDuration > 0 && currentDuration <= 30 && currentTime < 25) {
             adDetected = true;
             reason = `very short duration: ${currentDuration}s (likely ad)`;
@@ -917,6 +969,116 @@
         return 0;
     }
     
+    // Guest-specific ad detection and recovery
+    function checkGuestAdRecovery() {
+        if (isHost || !player) return;
+        
+        const playerState = player.getPlayerState();
+        const currentDuration = player.getDuration();
+        const now = Date.now();
+        
+        // Skip if we just tried to recover (prevent spam)
+        if (now - lastAdSkipTime < 3000) return;
+        
+        console.log(`[GUEST-AD] Checking recovery: state=${YT_STATE[playerState]}, duration=${currentDuration}s`);
+        
+        // Guest ad detection scenarios:
+        let adDetected = false;
+        let reason = '';
+        
+        // Scenario 1: Player stuck in UNSTARTED state
+        if (playerState === YT.PlayerState.UNSTARTED && currentVideoId) {
+            adDetected = true;
+            reason = 'stuck in UNSTARTED state with video ID';
+        }
+        
+        // Scenario 2: DOM ad indicators
+        const adIndicators = [
+            '.ytp-ad-skip-button',
+            '.ytp-ad-overlay-container',
+            '.ytp-ad-text'
+        ];
+        if (adIndicators.some(selector => document.querySelector(selector))) {
+            adDetected = true;
+            reason = 'DOM ad indicators found';
+        }
+        
+        // Scenario 3: Player controls visibility check (your excellent discovery!)
+        if (arePlayerControlsHidden()) {
+            adDetected = true;
+            reason = 'player controls hidden - ad overlay detected';
+        }
+        
+        // Scenario 4: Very short duration suggesting ads
+        if (currentDuration > 0 && currentDuration <= 60 && playerState !== YT.PlayerState.PLAYING) {
+            adDetected = true;
+            reason = `short duration ${currentDuration}s in non-playing state`;
+        }
+        
+        // Scenario 4: Expected sync but player not responding
+        if (officialVideoDuration > 0 && currentDuration > 0 && 
+            Math.abs(currentDuration - officialVideoDuration) > 30) {
+            adDetected = true;
+            reason = `major duration mismatch: ${currentDuration}s vs expected ${officialVideoDuration}s`;
+        }
+        
+        if (adDetected) {
+            console.log(`[GUEST-AD] Ad/loading issue detected: ${reason}`);
+            attemptGuestRecovery();
+        }
+    }
+    
+    function attemptGuestRecovery() {
+        const now = Date.now();
+        lastAdSkipTime = now;
+        adSkipAttempts++;
+        
+        console.log(`[GUEST-AD] Attempting recovery (attempt ${adSkipAttempts})`);
+        
+        // Method 1: Try to skip ads first
+        const skipButton = document.querySelector('.ytp-ad-skip-button, .ytp-skip-ad-button, .ytp-ad-skip-button-modern');
+        if (skipButton && skipButton.offsetParent !== null) {
+            console.log('[GUEST-AD] Found skip button, clicking');
+            skipButton.click();
+            return;
+        }
+        
+        // Method 2: Try to seek past ads
+        if (player && typeof player.getDuration === 'function') {
+            const duration = player.getDuration();
+            if (duration > 0 && duration < 120) {
+                console.log('[GUEST-AD] Seeking to end of short video (likely ad)');
+                player.seekTo(duration - 0.1, true);
+                return;
+            }
+        }
+        
+        // Method 3: Force reload the correct video
+        if (currentVideoId && adSkipAttempts >= 2) {
+            console.log('[GUEST-AD] Force reloading video for recovery');
+            
+            // Calculate expected time based on when sync should be
+            let expectedTime = 0;
+            if (officialVideoDuration > 0) {
+                // Estimate based on how long the video has been playing
+                expectedTime = Math.min(5, officialVideoDuration * 0.1); // Conservative estimate
+            }
+            
+            player.loadVideoById(currentVideoId, expectedTime);
+            adSkipAttempts = 0; // Reset after reload
+            
+            // Request fresh sync from host
+            setTimeout(() => {
+                const requestData = { type: 'REQUEST_POSITION' };
+                const hostChannel = dataChannels['host'];
+                if (hostChannel && hostChannel.readyState === 'open') {
+                    hostChannel.send(JSON.stringify(requestData));
+                    console.log('[GUEST-AD] Requested fresh sync after recovery');
+                }
+            }, 2000);
+        }
+    }
+
     // Timer-based ad detection for stuck loading states
     let adDetectionTimer = null;
     
@@ -951,6 +1113,40 @@
             }
         }, 30000);
     }
+    
+    // Guest recovery timer for ad issues
+    let guestRecoveryTimer = null;
+    
+    function startGuestRecoveryTimer() {
+        if (isHost) return; // Only for guests
+        
+        // Clear any existing timer
+        if (guestRecoveryTimer) {
+            clearInterval(guestRecoveryTimer);
+        }
+        
+        console.log('[GUEST-AD] Starting recovery timer');
+        
+        // Check for recovery needs every 5 seconds
+        guestRecoveryTimer = setInterval(() => {
+            if (!isHost && player) {
+                const state = player.getPlayerState();
+                // Check for issues if stuck in problematic states
+                if (state === YT.PlayerState.UNSTARTED || state === YT.PlayerState.BUFFERING) {
+                    checkGuestAdRecovery();
+                }
+            }
+        }, 5000);
+        
+        // Clear timer after 60 seconds to prevent infinite running
+        setTimeout(() => {
+            if (guestRecoveryTimer) {
+                clearInterval(guestRecoveryTimer);
+                guestRecoveryTimer = null;
+                console.log('[GUEST-AD] Recovery timer cleared after 60 seconds');
+            }
+        }, 60000);
+    }
 
     // Enhanced TIME_UPDATE handling for ad detection
     function handleTimeUpdate() {
@@ -964,11 +1160,13 @@
         
         // Broadcast time updates to guests for synchronization
         if (currentState === YT.PlayerState.PLAYING) {
+            const videoData = player.getVideoData();
             broadcastData({ 
                 type: 'TIME_UPDATE', 
                 time: hostTime,
                 duration: player.getDuration(),
-                state: currentState 
+                state: currentState,
+                videoId: videoData ? videoData.video_id : currentVideoId
             });
         }
     }
@@ -1596,6 +1794,9 @@ let lastAdSkipTime = 0; // Prevent spam clicking
                 // Start ad detection timer for hosts
                 if (isHost) {
                     startAdDetectionTimer();
+                } else {
+                    // Start recovery timer for guests
+                    startGuestRecoveryTimer();
                 }
                 
                 // Process any buffered messages after a short delay to allow video to load
@@ -1951,10 +2152,16 @@ let lastAdSkipTime = 0; // Prevent spam clicking
                 break;
             case 'VIDEO_DURATION':
                 officialVideoDuration = data.duration;
-                // Clear loading flag once we have the new video duration
+                // Clear loading flag once we have the new video duration AND player is ready
                 if (loadingNewVideo) {
-                    console.log('[DATA] New video loaded, clearing loading flag');
-                    loadingNewVideo = false;
+                    const playerState = player ? player.getPlayerState() : YT.PlayerState.UNSTARTED;
+                    if (playerState !== YT.PlayerState.UNSTARTED) {
+                        console.log('[DATA] New video loaded, clearing loading flag');
+                        loadingNewVideo = false;
+                        processPendingMessages(); // Process any buffered sync messages
+                    } else {
+                        console.log('[DATA] Video duration received but player not ready yet');
+                    }
                 }
                 break;
             case 'NEW_VIDEO':
@@ -1998,9 +2205,11 @@ let lastAdSkipTime = 0; // Prevent spam clicking
                 }
                 player.loadVideoById(data.videoId);
                 
-                // Start ad detection timer for hosts loading new videos
+                // Start appropriate timer based on host/guest
                 if (isHost) {
                     startAdDetectionTimer();
+                } else {
+                    startGuestRecoveryTimer();
                 }
                 break;
             case 'STATE_CHANGE': {
@@ -2027,9 +2236,30 @@ let lastAdSkipTime = 0; // Prevent spam clicking
                 // Check current player state to avoid conflicts
                 const currentState = player.getPlayerState();
                 
-                // Don't sync state changes when player is in UNSTARTED (no video loaded)
+                // Don't sync state changes when player is in UNSTARTED, but try to recover
                 if (currentState === YT.PlayerState.UNSTARTED) {
-                    console.log('[DATA] Ignoring state change - player has no video loaded');
+                    // For guests, this might be an ad issue
+                    if (!isHost) {
+                        console.log('[GUEST-AD] STATE_CHANGE received but player UNSTARTED - checking for ads');
+                        checkGuestAdRecovery();
+                    }
+                    
+                    if (data.videoId && currentVideoId && data.videoId === currentVideoId) {
+                        console.log('[DATA] Guest player unstarted, attempting to reload video:', data.videoId);
+                        player.loadVideoById(data.videoId, data.time || 0);
+                        // Don't return immediately, let the state change through after a delay
+                        setTimeout(() => {
+                            if (player.getPlayerState() !== YT.PlayerState.UNSTARTED) {
+                                if (data.state === YT.PlayerState.PLAYING) {
+                                    player.playVideo();
+                                } else if (data.state === YT.PlayerState.PAUSED) {
+                                    player.pauseVideo();
+                                }
+                            }
+                        }, 1000);
+                    } else {
+                        console.log('[DATA] Ignoring state change - player has no video loaded');
+                    }
                     return;
                 }
                 
@@ -2092,9 +2322,28 @@ let lastAdSkipTime = 0; // Prevent spam clicking
                             break;
                         }
                         
-                        // Only sync if we're not in UNSTARTED state (no video loaded)
+                        // Only sync if we're not in UNSTARTED state, unless we're actively loading
                         if (localState === YT.PlayerState.UNSTARTED) {
-                            console.log('[DATA] Cannot sync - no video loaded locally');
+                            // For guests, check if this might be an ad issue
+                            if (!isHost) {
+                                console.log('[GUEST-AD] UNSTARTED state during sync - checking for ad issues');
+                                checkGuestAdRecovery();
+                            }
+                            
+                            // If we're loading a new video, try to load it first
+                            if (data.videoId && currentVideoId && data.videoId === currentVideoId) {
+                                console.log('[DATA] Retrying video load for sync - player in UNSTARTED state');
+                                player.loadVideoById(data.videoId, data.time);
+                                // Give it a moment to load, then try sync again
+                                setTimeout(() => {
+                                    if (player.getPlayerState() !== YT.PlayerState.UNSTARTED) {
+                                        player.seekTo(data.time, true);
+                                        player.playVideo();
+                                    }
+                                }, 1000);
+                            } else {
+                                console.log('[DATA] Cannot sync - no video loaded locally');
+                            }
                             break;
                         }
                         
