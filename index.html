@@ -1040,10 +1040,11 @@
     }
 
     function createPeerConnection(peerId, peerName) {
-        if (hostMigrationInProgress) {
-            console.log('[RTC] Skipping connection creation during migration');
-            return null;
-        }
+        // Remove this problematic check that's blocking guest connections
+        // if (hostMigrationInProgress) {
+        //     console.log('[RTC] Skipping connection creation during migration');
+        //     return null;
+        // }
         
         const pc = new RTCPeerConnection(rtcConfig);
         peerConnections[peerId] = pc;
