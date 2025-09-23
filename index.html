@@ -1019,17 +1019,34 @@
                         console.error('[HOST] Error handling new guest', guestId, e);
                     }
                 } else if (change.type === 'modified') {
-                    // Handle ICE-restart offers from guest
+                    // Handle ICE-restart offers from guest with throttling
                     try {
                         const pc = peerConnections[guestId];
                         if (!pc) continue;
-                        if (data.offer && pc.signalingState !== 'have-remote-offer') {
-                            console.log('[HOST] Guest', guestId, 'sent ICE-restart offer; answering...');
-                            await pc.setRemoteDescription(new RTCSessionDescription(data.offer));
-                            const answer = await pc.createAnswer();
-                            await pc.setLocalDescription(answer);
-                            await doc.ref.update({ answer });
-                            console.log('[HOST] Wrote restart answer for', guestId);
+                        
+                        const now = Date.now();
+                        
+                        // Throttle restart responses to prevent loops
+                        if (pc._lastRestartResponse && (now - pc._lastRestartResponse) < 5000) {
+                            console.log('[HOST] Restart response throttled for', guestId);
+                            continue;
+                        }
+                        
+                        if (data.offer && data.restartedAt && pc.signalingState !== 'have-remote-offer') {
+                            // Only process if this is a newer restart attempt
+                            if (!pc._lastProcessedRestart || data.restartedAt > pc._lastProcessedRestart) {
+                                console.log('[HOST] Guest', guestId, 'sent ICE-restart offer; answering...');
+                                await pc.setRemoteDescription(new RTCSessionDescription(data.offer));
+                                const answer = await pc.createAnswer();
+                                await pc.setLocalDescription(answer);
+                                await doc.ref.update({ answer });
+                                console.log('[HOST] Wrote restart answer for', guestId);
+                                
+                                pc._lastRestartResponse = now;
+                                pc._lastProcessedRestart = data.restartedAt;
+                            } else {
+                                console.log('[HOST] Ignoring duplicate restart from', guestId);
+                            }
                         }
                     } catch (e) {
                         console.error('[HOST] Failed to process modified guest doc:', guestId, e);
@@ -1054,7 +1071,12 @@
         let disconnectTimer = null;
 
         pc.onconnectionstatechange = () => {
-            console.log(`[RTC:${peerId}] connectionState=`, pc.connectionState);
+            // Throttle logging to reduce spam
+            const now = Date.now();
+            if (!pc._lastStateLog || (now - pc._lastStateLog) > 2000) {
+                console.log(`[RTC:${peerId}] connectionState=`, pc.connectionState);
+                pc._lastStateLog = now;
+            }
             updateConnectionStatus();
             
             // Handle host disconnection more aggressively
@@ -1073,8 +1095,15 @@
                 }
             }
         };
+
         pc.oniceconnectionstatechange = () => {
-            console.log(`[RTC:${peerId}] iceConnectionState=`, pc.iceConnectionState);
+            // Throttle logging
+            const now = Date.now();
+            if (!pc._lastIceStateLog || (now - pc._lastIceStateLog) > 2000) {
+                console.log(`[RTC:${peerId}] iceConnectionState=`, pc.iceConnectionState);
+                pc._lastIceStateLog = now;
+            }
+            
             if (pc.iceConnectionState === 'disconnected') {
                 clearTimeout(disconnectTimer);
                 disconnectTimer = setTimeout(() => {
@@ -1082,15 +1111,27 @@
                         console.warn(`[RTC:${peerId}] Still disconnected; attempting ICE restart (guest side only).`);
                         attemptGuestIceRestart(pc);
                     }
-                }, 2000);
+                }, 5000); // Increased from 2000ms to 5000ms
             } else if (pc.iceConnectionState === 'failed') {
                 console.warn(`[RTC:${peerId}] ICE failed. You likely need a TURN server.`);
             } else if (pc.iceConnectionState === 'connected' || pc.iceConnectionState === 'completed') {
                 clearTimeout(disconnectTimer);
             }
         };
-        pc.onsignalingstatechange = () => console.log(`[RTC:${peerId}] signalingState=`, pc.signalingState);
-        pc.onicegatheringstatechange = () => console.log(`[RTC:${peerId}] iceGatheringState=`, pc.iceGatheringState);
+        // Remove excessive signaling state logging completely
+        pc.onsignalingstatechange = () => {
+            // Only log significant state changes
+            if (pc.signalingState === 'stable' || pc.signalingState === 'closed') {
+                console.log(`[RTC:${peerId}] signalingState=`, pc.signalingState);
+            }
+        };
+        // Remove ICE gathering state logging completely
+        pc.onicegatheringstatechange = () => {
+            // Only log completion
+            if (pc.iceGatheringState === 'complete') {
+                console.log(`[RTC:${peerId}] iceGatheringState= complete`);
+            }
+        };
         return pc;
     }
     
@@ -1099,6 +1140,14 @@
         // Only guests restart toward the host
         if (isHost || pc.peerId !== 'host') return;
         if (!pc._guestDocRef) return;
+        
+        // Add throttling to prevent restart loops
+        const now = Date.now();
+        if (pc._lastRestartAttempt && (now - pc._lastRestartAttempt) < 10000) {
+            console.log('[JOIN] ICE restart throttled (last attempt too recent)');
+            return;
+        }
+        
         if (pc._iceRestartInProgress) {
             console.log('[JOIN] ICE restart already in progress; skipping.');
             return;
@@ -1107,17 +1156,25 @@
             console.warn('[JOIN] ICE restart skipped; connection already closed.');
             return;
         }
+        
+        // Check connection state - only restart if truly failed/disconnected
+        if (pc.connectionState !== 'failed' && pc.iceConnectionState !== 'failed' && pc.iceConnectionState !== 'disconnected') {
+            console.log('[JOIN] ICE restart skipped; connection not in failed state');
+            return;
+        }
+        
         pc._iceRestartInProgress = true;
+        pc._lastRestartAttempt = now;
+        
         try {
             console.log('[JOIN] Attempting ICE restart...');
-            // Do NOT clear candidate subcollections (avoid permission issues).
             // Create a new offer with iceRestart
             const offer = await pc.createOffer({ iceRestart: true });
             await pc.setLocalDescription(offer);
             // Clear old answer so host will respond with a fresh answer
             await pc._guestDocRef.update({
                 offer,
-                restartedAt: Date.now(),
+                restartedAt: now,
                 answer: firebase.firestore.FieldValue.delete()
             });
             console.log('[JOIN] Wrote restart offer');
