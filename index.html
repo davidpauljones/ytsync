@@ -85,7 +85,17 @@
         .user-modal { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background-color: rgba(0,0,0,0.7); display: flex; align-items: center; justify-content: center; z-index: 1000; }
         .user-container { background: var(--secondary-background); color: var(--primary-text); padding: 24px; border-radius: 12px; text-align: center; }
         .user-container input { background-color: var(--input-background); color: var(--primary-text); border: 1px solid var(--border-color); border-radius: 8px; padding: 8px; margin: 0 8px; }
-        #inviteLink { font-size: 14px; background-color: var(--input-background); color: var(--primary-text); border: 1px solid var(--border-color); padding: 8px; border-radius: 8px; width: calc(100% - 16px); }
+        #inviteLink { 
+            font-size: 14px; 
+            background-color: var(--input-background); 
+            color: var(--primary-text); 
+            border: 1px solid var(--border-color); 
+            padding: 8px; 
+            border-radius: 8px; 
+            width: calc(100% - 16px);
+            font-family: monospace; /* Better for URLs */
+            word-break: break-all; /* Ensure long URLs wrap properly */
+        }
         #createInviteBtn { width: 100%; margin-bottom: 10px;}
         .invite-row { display: flex; gap: 8px; margin-top: 8px; align-items: center; }
         .invite-row #inviteLink { width: auto; flex: 1; min-width: 0; }
@@ -1489,18 +1499,41 @@
     copyInviteBtn.addEventListener('click', async () => {
         const link = inviteLinkInput.value;
         if (!link) return;
+        
         try {
+            // Modern clipboard API (works in HTTPS contexts)
             await navigator.clipboard.writeText(link);
             copyInviteBtn.textContent = 'Copied!';
             setTimeout(() => (copyInviteBtn.textContent = 'Copy'), 1500);
         } catch (err) {
-            // Fallback for non-secure contexts
-            inviteLinkInput.select();
-            inviteLinkInput.setSelectionRange(0, link.length);
-            const success = document.execCommand && document.execCommand('copy');
-            copyInviteBtn.textContent = success ? 'Copied!' : 'Copy failed';
-            setTimeout(() => (copyInviteBtn.textContent = 'Copy'), 1500);
-            if (window.getSelection) window.getSelection().removeAllRanges();
+            console.warn('Modern clipboard failed, trying fallback:', err);
+            // Fallback for older browsers or non-HTTPS contexts
+            try {
+                // Focus the input first
+                inviteLinkInput.focus();
+                // Select all text
+                inviteLinkInput.select();
+                // For mobile browsers, ensure full selection
+                inviteLinkInput.setSelectionRange(0, inviteLinkInput.value.length);
+                
+                // Copy the selection
+                const success = document.execCommand('copy');
+                
+                copyInviteBtn.textContent = success ? 'Copied!' : 'Copy failed';
+                setTimeout(() => (copyInviteBtn.textContent = 'Copy'), 1500);
+                
+                // Clear selection
+                if (window.getSelection) {
+                    window.getSelection().removeAllRanges();
+                }
+                // Blur the input to remove focus
+                inviteLinkInput.blur();
+                
+            } catch (fallbackErr) {
+                console.error('Fallback copy also failed:', fallbackErr);
+                copyInviteBtn.textContent = 'Copy failed';
+                setTimeout(() => (copyInviteBtn.textContent = 'Copy'), 1500);
+            }
         }
     });
 
