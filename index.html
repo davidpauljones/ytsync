@@ -990,16 +990,29 @@
                 'onReady': () => {
                     console.log('[YT] Player ready');
                     playerReady = true;
-                    // Process any buffered messages
-                    console.log(`[YT] Processing ${pendingMessages.length} buffered messages`);
-                    while (pendingMessages.length > 0) {
-                        const { data, senderId } = pendingMessages.shift();
-                        handleReceivedData(data, senderId);
-                    }
+                    processPendingMessages();
                 }
             }
         });
     };
+    
+    // Helper function to process buffered messages
+    function processPendingMessages() {
+        if (pendingMessages.length > 0) {
+            console.log(`[YT] Processing ${pendingMessages.length} buffered messages`);
+            const messagesToProcess = [...pendingMessages];
+            pendingMessages = []; // Clear the buffer first to prevent recursion
+            
+            messagesToProcess.forEach(({ data, senderId }) => {
+                try {
+                    handleReceivedData(data, senderId);
+                } catch (error) {
+                    console.error('[YT] Error processing buffered message:', error);
+                }
+            });
+        }
+    }
+    
     searchButton.addEventListener('click', searchYouTube);
     searchInput.addEventListener('keypress', e => e.key === 'Enter' && searchYouTube());
 
@@ -1514,6 +1527,12 @@ let lastAdSkipTime = 0; // Prevent spam clicking
             // Load the video immediately for the guest
             if (player && typeof player.loadVideoById === 'function') {
                 player.loadVideoById(data.videoId);
+                
+                // Process any buffered messages after a short delay to allow video to load
+                setTimeout(() => {
+                    processPendingMessages();
+                }, 1000);
+                
                 if (data.autoPlay) {
                     // Set a flag to auto-play once loaded
                     setTimeout(() => {
@@ -1785,16 +1804,19 @@ let lastAdSkipTime = 0; // Prevent spam clicking
     }
 
     function handleReceivedData(data, senderId) {
+        // Improved player readiness check
+        const isPlayerActuallyReady = playerReady && player && typeof player.getPlayerState === 'function';
+        
         // Buffer messages if player isn't ready yet
-        if (!playerReady && (data.type.includes('VIDEO') || data.type === 'TIME_UPDATE' || data.type === 'STATE_CHANGE' || data.type === 'INITIAL_SYNC' || data.type === 'VIDEO_DURATION')) {
-            console.log(`[DATA] Buffering ${data.type} - player not ready yet`);
+        if (!isPlayerActuallyReady && (data.type.includes('VIDEO') || data.type === 'TIME_UPDATE' || data.type === 'STATE_CHANGE' || data.type === 'INITIAL_SYNC' || data.type === 'VIDEO_DURATION')) {
+            console.log(`[DATA] Buffering ${data.type} - player not ready yet (playerReady: ${playerReady}, player: ${!!player})`);
             pendingMessages.push({ data, senderId });
             return;
         }
         
-        // Additional safety check for player methods (in case playerReady flag is wrong)
-        if (!player && (data.type.includes('VIDEO') || data.type === 'TIME_UPDATE' || data.type === 'STATE_CHANGE' || data.type === 'INITIAL_SYNC')) {
-            console.log(`[DATA] Ignoring ${data.type} - player object not ready yet`);
+        // Additional safety check for specific player methods before use
+        if (data.type === 'TIME_UPDATE' && (!player || typeof player.getCurrentTime !== 'function')) {
+            console.log(`[DATA] Ignoring ${data.type} - player methods not available`);
             return;
         }
         
@@ -1909,6 +1931,7 @@ let lastAdSkipTime = 0; // Prevent spam clicking
                     if (data.state === YT.PlayerState.PLAYING) {
                         player.playVideo();
                         loadingNewVideo = false; // Clear flag once playing
+                        processPendingMessages(); // Process any messages that were buffered during loading
                     } else if (data.state === YT.PlayerState.PAUSED) {
                         player.pauseVideo();
                     }
