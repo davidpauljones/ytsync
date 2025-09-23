@@ -690,13 +690,42 @@
         chatInput.addEventListener('keypress', e => {
             if (e.key === 'Enter') sendChatMessage();
         });
-        window.addEventListener('beforeunload', () => {
+        // Enhanced leaving detection - multiple methods for reliability
+        const sendLeavingMessage = () => {
             const data = { type: 'USER_LEAVING' };
             Object.values(dataChannels).forEach(channel => {
                 if (channel && channel.readyState === 'open') {
-                    channel.send(JSON.stringify(data));
+                    try {
+                        channel.send(JSON.stringify(data));
+                    } catch (e) {
+                        console.warn('Error sending leaving message:', e);
+                    }
                 }
             });
+        };
+
+        // Method 1: beforeunload event
+        window.addEventListener('beforeunload', sendLeavingMessage);
+        
+        // Method 2: pagehide event (more reliable on mobile)
+        window.addEventListener('pagehide', sendLeavingMessage);
+        
+        // Method 3: visibilitychange when document becomes hidden for extended period
+        let hiddenTimeout;
+        document.addEventListener('visibilitychange', () => {
+            if (document.hidden) {
+                // Set a timeout to send leaving message if hidden for too long
+                hiddenTimeout = setTimeout(() => {
+                    console.log('[CLEANUP] Tab hidden for 30 seconds, sending leaving message');
+                    sendLeavingMessage();
+                }, 30000); // 30 seconds
+            } else {
+                // Tab became visible again, cancel the timeout
+                if (hiddenTimeout) {
+                    clearTimeout(hiddenTimeout);
+                    hiddenTimeout = null;
+                }
+            }
         });
 
         // Handle visibility changes to prevent auto-pause when tab loses focus
@@ -719,6 +748,46 @@
                 }, 100); // Small delay to catch the browser's auto-pause
             }
         });
+
+        // Add periodic cleanup for stale connections (every 2 minutes)
+        setInterval(() => {
+            if (isHost) {
+                let removedUsers = [];
+                
+                // Check for disconnected peer connections
+                Object.entries(peerConnections).forEach(([peerId, pc]) => {
+                    if (pc.connectionState === 'closed' || pc.connectionState === 'failed') {
+                        console.log(`[CLEANUP] Removing stale connection: ${peerId}`);
+                        
+                        // Clean up
+                        delete peerConnections[peerId];
+                        delete dataChannels[peerId];
+                        delete localUserList[peerId];
+                        removedUsers.push(peerId);
+                        
+                        // Clean up Firestore
+                        if (partyDocRef) {
+                            partyDocRef.collection('guests').doc(peerId).delete().catch(error => 
+                                console.error("Error removing stale guest document:", error)
+                            );
+                        }
+                    }
+                });
+                
+                // If we removed anyone, update the user list
+                if (removedUsers.length > 0) {
+                    console.log(`[CLEANUP] Removed ${removedUsers.length} stale connections`);
+                    
+                    const users = { [myAuthId]: { name: myName } };
+                    Object.entries(peerConnections).forEach(([id, pc]) => {
+                        if (pc.peerName) users[id] = { name: pc.peerName };
+                    });
+                    localUserList = users;
+                    broadcastData({ type: 'USER_LIST', users });
+                    updateUserList(localUserList);
+                }
+            }
+        }, 120000); // 2 minutes
 
         // Add periodic check to prevent auto-pause when tab is hidden
         setInterval(() => {
@@ -1460,23 +1529,34 @@ let isManualPause = false;
                 return;
             }
             
+            // Clean up connections
+            delete peerConnections[peerId];
+            delete dataChannels[peerId];
+            
+            // Remove from local user list
+            delete localUserList[peerId];
+            
+            // Clean up Firestore if we're the host
             if (isHost && partyDocRef) {
                 partyDocRef.collection('guests').doc(peerId).delete().catch(error => 
                     console.error("Error removing guest document:", error)
                 );
             }
             
-            delete peerConnections[peerId];
-            delete dataChannels[peerId];
             updateConnectionStatus();
             
+            // Update and broadcast user list
             if (isHost) {
                 const users = { [myAuthId]: { name: myName } };
                 Object.entries(peerConnections).forEach(([id, pc]) => {
                     if (pc.peerName) users[id] = { name: pc.peerName };
                 });
+                localUserList = users;
                 broadcastData({ type: 'USER_LIST', users });
             }
+            
+            // Update local UI for everyone
+            updateUserList(localUserList);
         };
         channel.onmessage = event => {
             try { handleReceivedData(JSON.parse(event.data), peerId); }
@@ -1816,9 +1896,41 @@ let isManualPause = false;
                 }
                 break;
             case 'USER_LEAVING':
-                if (isHost && peerConnections[senderId]) {
+                console.log('[DATA] User leaving:', senderId);
+                
+                // Clean up connections and user list
+                if (peerConnections[senderId]) {
                     peerConnections[senderId].close();
+                    delete peerConnections[senderId];
                 }
+                
+                if (dataChannels[senderId]) {
+                    dataChannels[senderId].close();
+                    delete dataChannels[senderId];
+                }
+                
+                // Remove user from local user list
+                delete localUserList[senderId];
+                
+                // If we're the host, broadcast updated user list to everyone
+                if (isHost) {
+                    const users = { [myAuthId]: { name: myName } };
+                    Object.entries(peerConnections).forEach(([id, pc]) => {
+                        if (pc.peerName) users[id] = { name: pc.peerName };
+                    });
+                    broadcastData({ type: 'USER_LIST', users });
+                    
+                    // Also clean up Firestore guest document
+                    if (partyDocRef) {
+                        partyDocRef.collection('guests').doc(senderId).delete().catch(error => 
+                            console.error("Error removing guest document:", error)
+                        );
+                    }
+                }
+                
+                // Update local UI
+                updateUserList(localUserList);
+                updateConnectionStatus();
                 break;
             case 'QUEUE_UPDATE':
                 videoQueue = data.queue;
@@ -1979,6 +2091,10 @@ let isManualPause = false;
         // Reset connection state
         isHost = false;
         currentHostId = '';
+        
+        // Clear user list except for ourselves
+        localUserList = { [myAuthId]: { name: myName } };
+        updateUserList(localUserList);
         
         console.log('[MIGRATION] Cleanup complete');
     }
