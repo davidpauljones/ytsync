@@ -1291,6 +1291,28 @@ let loadingNewVideo = false;
             isSyncingFromHost = false;
         }
         
+        // If guest is loading a NEW_VIDEO, load it locally first to prevent sync conflicts
+        if (!isHost && data.type === 'NEW_VIDEO') {
+            console.log('[DATA] Guest loading video locally first:', data.videoId);
+            loadingNewVideo = true;
+            currentVideoId = data.videoId;
+            hideUpNextOverlay();
+            updateVideoTitle();
+            
+            // Load the video immediately for the guest
+            if (player && typeof player.loadVideoById === 'function') {
+                player.loadVideoById(data.videoId);
+                if (data.autoPlay) {
+                    // Set a flag to auto-play once loaded
+                    setTimeout(() => {
+                        if (player.getPlayerState() === YT.PlayerState.CUED) {
+                            player.playVideo();
+                        }
+                    }, 1000);
+                }
+            }
+        }
+        
         if (isHost) {
             broadcastData(data);
         } else {
@@ -1574,21 +1596,25 @@ let loadingNewVideo = false;
                 // Check if this is from our own request (avoid double processing)
                 const currentVideoData = player.getVideoData();
                 if (currentVideoData && currentVideoData.video_id === data.videoId) {
-                    console.log('[DATA] NEW_VIDEO already loaded locally, updating sync state only');
+                    console.log('[DATA] NEW_VIDEO already loaded locally, syncing state only');
                     currentVideoId = data.videoId;
+                    
+                    // If this is a sync message and we should auto-play, do it
                     if (data.autoPlay && player.getPlayerState() !== YT.PlayerState.PLAYING) {
+                        console.log('[DATA] Auto-playing already loaded video');
                         player.playVideo();
                     }
                     return;
                 }
                 
+                // Only load if we don't have the video loaded or it's different
                 console.log('[DATA] Loading NEW_VIDEO from remote:', data.videoId);
                 isSyncingFromHost = true;
-                loadingNewVideo = true; // Set flag to prevent ad detection
+                loadingNewVideo = true;
                 officialVideoDuration = 0;
                 currentVideoId = data.videoId;
                 hideUpNextOverlay();
-                updateVideoTitle(); // Update title immediately
+                updateVideoTitle();
                 
                 // Set timeout to reset sync flag
                 setTimeout(() => {
@@ -1621,6 +1647,15 @@ let loadingNewVideo = false;
                     return;
                 }
                 
+                // Check current player state to avoid conflicts
+                const currentState = player.getPlayerState();
+                
+                // Don't sync state changes when player is in UNSTARTED (no video loaded)
+                if (currentState === YT.PlayerState.UNSTARTED) {
+                    console.log('[DATA] Ignoring state change - player has no video loaded');
+                    return;
+                }
+                
                 isSyncingFromHost = true;
                 lastPlayerState = data.state;
                 
@@ -1649,19 +1684,39 @@ let loadingNewVideo = false;
                 }
                 if (!isHost) {
                     if (Date.now() - lastUserActionTimestamp < 3000) break;
+                    
+                    // Check if we're syncing to the same video
+                    const currentVideoData = player.getVideoData();
+                    const currentVideoId = currentVideoData ? currentVideoData.video_id : null;
+                    
+                    // If we're loading a new video, ignore time updates for different videos
+                    if (loadingNewVideo && currentVideoId && currentVideoId !== data.videoId) {
+                        console.log('[DATA] Ignoring TIME_UPDATE for different video during loading');
+                        return;
+                    }
+                    
                     const localTime = player.getCurrentTime();
                     const localState = player.getPlayerState();
                     const timeDifference = Math.abs(localTime - data.time);
+                    
                     if (data.state === YT.PlayerState.PLAYING && (localState !== YT.PlayerState.PLAYING || timeDifference > 3.5)) {
                         const currentDuration = player.getDuration();
                         if (officialVideoDuration > 0 && Math.abs(currentDuration - officialVideoDuration) > 2) {
+                            console.log('[DATA] Duration mismatch, ignoring sync');
                             break;
                         }
+                        
+                        // Only sync if we're not in UNSTARTED state (no video loaded)
+                        if (localState === YT.PlayerState.UNSTARTED) {
+                            console.log('[DATA] Cannot sync - no video loaded locally');
+                            break;
+                        }
+                        
                         isSyncingFromHost = true;
                         player.seekTo(data.time, true);
                         player.playVideo();
                     } 
-                    else if (data.state === YT.PlayerState.PAUSED && localState !== YT.PlayerState.PAUSED) {
+                    else if (data.state === YT.PlayerState.PAUSED && localState !== YT.PlayerState.PAUSED && localState !== YT.PlayerState.UNSTARTED) {
                         console.log("Heartbeat correcting to PAUSED state.");
                         isSyncingFromHost = true;
                         player.pauseVideo();
