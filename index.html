@@ -1200,6 +1200,11 @@
         chatMessages.scrollTop = chatMessages.scrollHeight;
     }
 
+    // Add this variable declaration around line 580, with the other state variables:
+let hostMigrationInProgress = false;
+let hostMigrationTimeout = null;
+let hostElectionLock = null;
+
     function handleUserAction(data) {
         if (isHost) {
             broadcastData(data);
