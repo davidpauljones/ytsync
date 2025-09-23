@@ -763,6 +763,7 @@
                         delete peerConnections[peerId];
                         delete dataChannels[peerId];
                         delete localUserList[peerId];
+                        delete guestTimePositions[peerId]; // Clean up position tracking
                         removedUsers.push(peerId);
                         
                         // Clean up Firestore
@@ -786,6 +787,14 @@
                     broadcastData({ type: 'USER_LIST', users });
                     updateUserList(localUserList);
                 }
+                
+                // Also clean up old guest time positions (older than 30 seconds)
+                const now = Date.now();
+                Object.keys(guestTimePositions).forEach(guestId => {
+                    if (now - guestTimePositions[guestId].timestamp > 30000) {
+                        delete guestTimePositions[guestId];
+                    }
+                });
             }
         }, 120000); // 2 minutes
 
@@ -1388,6 +1397,7 @@ let playerReady = false;
 let pendingMessages = [];
 let loadingNewVideo = false;
 let isManualPause = false;
+let guestTimePositions = {}; // Track guest positions for reverse sync
 
     function handleUserAction(data) {
         // Clear sync flag for any user-initiated action
@@ -1623,6 +1633,26 @@ let isManualPause = false;
         } else if (state === YT.PlayerState.PLAYING) {
             isManualPause = false;
             console.log('[YT] Video playing, clearing manual pause flag');
+            
+            // Host ad/buffer recovery detection
+            if (isHost && player) {
+                const currentTime = player.getCurrentTime();
+                const currentDuration = player.getDuration();
+                
+                // If host is playing from near the beginning (0-5 seconds) but has guests
+                // and the video has a reasonable duration, request guest positions
+                if (currentTime < 5 && currentDuration > 30 && Object.keys(dataChannels).length > 0) {
+                    console.log('[REVERSE-SYNC] Host may have restarted from ad, requesting guest positions');
+                    
+                    // Request current positions from all guests
+                    const requestData = { type: 'REQUEST_POSITION' };
+                    Object.entries(dataChannels).forEach(([id, channel]) => {
+                        if (id !== 'host' && channel && channel.readyState === 'open') {
+                            channel.send(JSON.stringify(requestData));
+                        }
+                    });
+                }
+            }
         }
 
         // Remove hidden tab pause suppression - we want videos to keep playing
@@ -1660,6 +1690,15 @@ let isManualPause = false;
         
     // FIXED: Host should process guest requests AND apply them locally
     if (isHost && data.type.startsWith('REQUEST_')) {
+        // Collect guest time positions for reverse sync
+        if (data.type === 'REQUEST_STATE_CHANGE' && data.time !== undefined) {
+            guestTimePositions[senderId] = {
+                time: data.time,
+                timestamp: Date.now()
+            };
+            console.log(`[SYNC] Collected time position from guest ${senderId}: ${data.time}`);
+        }
+        
         const commandData = { ...data, type: data.type.replace('REQUEST_', '') };
         // Apply the command to host's own player first
         handleReceivedData(commandData, 'local');
@@ -1851,6 +1890,35 @@ let isManualPause = false;
                     }
                 }
                 break;
+            case 'REQUEST_POSITION':
+                // Guest responds with current position
+                if (!isHost && player && typeof player.getCurrentTime === 'function') {
+                    const currentTime = player.getCurrentTime();
+                    const currentState = player.getPlayerState();
+                    console.log(`[REVERSE-SYNC] Responding with position: ${currentTime}`);
+                    
+                    const responseData = { 
+                        type: 'POSITION_RESPONSE', 
+                        time: currentTime, 
+                        state: currentState 
+                    };
+                    
+                    const hostChannel = dataChannels['host'];
+                    if (hostChannel && hostChannel.readyState === 'open') {
+                        hostChannel.send(JSON.stringify(responseData));
+                    }
+                }
+                break;
+            case 'POSITION_RESPONSE':
+                // Host collects guest positions for reverse sync
+                if (isHost) {
+                    guestTimePositions[senderId] = {
+                        time: data.time,
+                        timestamp: Date.now()
+                    };
+                    console.log(`[REVERSE-SYNC] Received position from guest ${senderId}: ${data.time}`);
+                }
+                break;
             case 'ADD_TO_QUEUE':
                 if (isHost) {
                     videoQueue.push(data.video);
@@ -1992,14 +2060,47 @@ let isManualPause = false;
         hostHeartbeatInterval = setInterval(() => {
             if (isHost && player && typeof player.getCurrentTime === 'function') {
                 const currentState = player.getPlayerState();
+                const hostTime = player.getCurrentTime();
+                
                 if (currentState === YT.PlayerState.ENDED && videoQueue.length > 0) {
                     const nextVideo = videoQueue.shift();
                     hideUpNextOverlay();
                     broadcastData({ type: 'NEW_VIDEO', videoId: nextVideo.videoId, autoPlay: true });
-                                       broadcastData({ type: 'QUEUE_UPDATE', queue: videoQueue });
+                    broadcastData({ type: 'QUEUE_UPDATE', queue: videoQueue });
                     return;
                 }
-                const data = { type: 'TIME_UPDATE', time: player.getCurrentTime(), state: currentState };
+                
+                // Check for reverse sync scenario (host behind guests due to ad/buffer)
+                if (currentState === YT.PlayerState.PLAYING && Object.keys(guestTimePositions).length > 0) {
+                    const now = Date.now();
+                    const recentGuestPositions = [];
+                    
+                    // Collect recent guest positions (within last 5 seconds)
+                    Object.entries(guestTimePositions).forEach(([guestId, posData]) => {
+                        if (now - posData.timestamp < 5000) {
+                            recentGuestPositions.push(posData.time);
+                        }
+                    });
+                    
+                    if (recentGuestPositions.length > 0) {
+                        const avgGuestTime = recentGuestPositions.reduce((sum, time) => sum + time, 0) / recentGuestPositions.length;
+                        const timeDifference = avgGuestTime - hostTime;
+                        
+                        // If host is significantly behind guests (10+ seconds), sync host to guests
+                        if (timeDifference > 10) {
+                            console.log(`[REVERSE-SYNC] Host behind by ${timeDifference.toFixed(2)}s, seeking forward to match guests`);
+                            player.seekTo(avgGuestTime, true);
+                            
+                            // Clear guest positions after sync
+                            guestTimePositions = {};
+                            
+                            // Don't send normal time update this cycle
+                            return;
+                        }
+                    }
+                }
+                
+                const data = { type: 'TIME_UPDATE', time: hostTime, state: currentState };
                 Object.entries(dataChannels).forEach(([id, channel]) => {
                     if (id !== 'host' && channel && channel.readyState === 'open') {
                         channel.send(JSON.stringify(data));
