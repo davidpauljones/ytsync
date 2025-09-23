@@ -1374,7 +1374,12 @@
     }
 
     function handleReceivedData(data, senderId) {
-        if (!player && data.type.includes('VIDEO')) return;
+        // Add player readiness check at the top
+        if (!player && (data.type.includes('VIDEO') || data.type === 'TIME_UPDATE' || data.type === 'STATE_CHANGE' || data.type === 'INITIAL_SYNC')) {
+            console.log(`[DATA] Ignoring ${data.type} - player not ready yet`);
+            return;
+        }
+        
         if (isHost && data.type.startsWith('REQUEST_')) {
             const commandData = { ...data, type: data.type.replace('REQUEST_', '') };
             broadcastData(commandData);
@@ -1385,6 +1390,11 @@
                 currentHostId = data.hostId;
                 break;
             case 'INITIAL_SYNC':
+                // Additional safety check for player methods
+                if (!player || typeof player.loadVideoById !== 'function') {
+                    console.log('[SYNC] Player not ready for INITIAL_SYNC, skipping');
+                    return;
+                }
                 isSyncingFromHost = true;
                 officialVideoDuration = data.duration;
                 if (player.getVideoData()?.video_id !== data.videoId) {
@@ -1392,7 +1402,6 @@
                 } else {
                     player.seekTo(data.time, true);
                 }
-                // Track the synced video
                 currentVideoId = data.videoId;
                 hideUpNextOverlay();
                 setTimeout(() => {
@@ -1407,9 +1416,13 @@
                 officialVideoDuration = data.duration;
                 break;
             case 'NEW_VIDEO':
+                // Additional safety check
+                if (!player || typeof player.loadVideoById !== 'function') {
+                    console.log('[DATA] Player not ready for NEW_VIDEO, skipping');
+                    return;
+                }
                 isSyncingFromHost = true;
                 officialVideoDuration = 0;
-                // Track the app-selected video
                 currentVideoId = data.videoId;
                 hideUpNextOverlay();
                 if (player.getVideoData()?.video_id !== data.videoId) {
@@ -1422,6 +1435,11 @@
                 }
                 break;
             case 'STATE_CHANGE': {
+                // Additional safety check
+                if (!player || typeof player.getCurrentTime !== 'function') {
+                    console.log('[DATA] Player not ready for STATE_CHANGE, skipping');
+                    return;
+                }
                 isSyncingFromHost = true;
                 lastPlayerState = data.state;
                 if (data.state === YT.PlayerState.PLAYING) {
@@ -1437,6 +1455,11 @@
                 break;
             }
             case 'TIME_UPDATE':
+                // Additional safety check
+                if (!player || typeof player.getCurrentTime !== 'function') {
+                    console.log('[DATA] Player not ready for TIME_UPDATE, skipping');
+                    return;
+                }
                 if (!isHost) {
                     if (Date.now() - lastUserActionTimestamp < 3000) break;
                     const localTime = player.getCurrentTime();
@@ -1462,7 +1485,7 @@
                 if (isHost) {
                     videoQueue.push(data.video);
                     broadcastData({ type: 'QUEUE_UPDATE', queue: videoQueue });
-                }
+                               }
                 break;
             case 'PLAY_FROM_QUEUE':
                 if (isHost && videoQueue[data.index]) {
