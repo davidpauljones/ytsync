@@ -698,6 +698,40 @@
                 }
             });
         });
+
+        // Handle visibility changes to prevent auto-pause when tab loses focus
+        document.addEventListener('visibilitychange', () => {
+            if (!document.hidden && player) {
+                // When tab becomes visible again, check if video should be playing
+                const state = player.getPlayerState();
+                console.log('[YT] Tab became visible, current state:', state);
+            } else if (document.hidden && player) {
+                // When tab becomes hidden, prevent auto-pause
+                console.log('[YT] Tab became hidden, preventing auto-pause');
+                
+                // If video is currently playing, keep it playing
+                setTimeout(() => {
+                    const state = player.getPlayerState();
+                    if (state === YT.PlayerState.PAUSED && !isManualPause) {
+                        console.log('[YT] Detected auto-pause from hidden tab, resuming playback');
+                        player.playVideo();
+                    }
+                }, 100); // Small delay to catch the browser's auto-pause
+            }
+        });
+
+        // Add periodic check to prevent auto-pause when tab is hidden
+        setInterval(() => {
+            if (document.hidden && player && typeof player.getPlayerState === 'function') {
+                const state = player.getPlayerState();
+                
+                // If video is paused but it shouldn't be (not a manual pause), resume it
+                if (state === YT.PlayerState.PAUSED && !isManualPause) {
+                    console.log('[YT] Periodic check: resuming auto-paused video in hidden tab');
+                    player.playVideo();
+                }
+            }
+        }, 1000); // Check every second
     }
 
     // --- THEATER MODE ---
@@ -1284,6 +1318,7 @@ let hostElectionLock = null;
 let playerReady = false;
 let pendingMessages = [];
 let loadingNewVideo = false;
+let isManualPause = false;
 
     function handleUserAction(data) {
         // Clear sync flag for any user-initiated action
@@ -1335,12 +1370,8 @@ let loadingNewVideo = false;
                 return;
             }
 
-            // Do not forward pauses caused by hidden tab (not user initiated)
-            if ((data.state === YT.PlayerState.PAUSED || data.state === YT.PlayerState.ENDED) &&
-                document.hidden && !data.userInitiated) {
-                console.log('Suppressing pause from hidden/inactive tab.');
-                return;
-            }
+            // Remove hidden tab pause suppression - allow all pauses to be sent
+            // We want videos to keep playing regardless of tab focus
 
             // Allow state changes during new video loading
             if (loadingNewVideo) {
@@ -1384,6 +1415,8 @@ let loadingNewVideo = false;
     }
 
     function broadcastData(data) {
+        // Remove hidden tab pause suppression - allow all state changes to be broadcasted
+        
         handleReceivedData(data, 'local');
         Object.entries(dataChannels).forEach(([id, channel]) => {
             if (id !== 'host' && channel && channel.readyState === 'open') {
@@ -1503,11 +1536,17 @@ let loadingNewVideo = false;
 
         const userInitiated = (Date.now() - lastUserGestureAt) < 1500;
 
-        if ((state === YT.PlayerState.PAUSED || state === YT.PlayerState.ENDED) &&
-            document.hidden && !userInitiated) {
-            console.log('[YT] Ignoring auto-pause from hidden/inactive tab.');
-            return;
+        // Track manual pauses to distinguish from auto-pauses
+        if (state === YT.PlayerState.PAUSED && userInitiated) {
+            isManualPause = true;
+            console.log('[YT] Manual pause detected');
+        } else if (state === YT.PlayerState.PLAYING) {
+            isManualPause = false;
+            console.log('[YT] Video playing, clearing manual pause flag');
         }
+
+        // Remove hidden tab pause suppression - we want videos to keep playing
+        // regardless of tab focus state
 
         if (userInitiated) {
             lastUserActionTimestamp = Date.now();
@@ -1658,6 +1697,15 @@ let loadingNewVideo = false;
                 
                 isSyncingFromHost = true;
                 lastPlayerState = data.state;
+                
+                // Track manual pauses from sync messages
+                if (data.state === YT.PlayerState.PAUSED && data.userInitiated) {
+                    isManualPause = true;
+                    console.log('[DATA] Manual pause received from sync');
+                } else if (data.state === YT.PlayerState.PLAYING) {
+                    isManualPause = false;
+                    console.log('[DATA] Playing state received from sync');
+                }
                 
                 // Set a timeout to reset the sync flag
                 setTimeout(() => {
