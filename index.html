@@ -812,6 +812,102 @@
         }, 1000); // Check every second
     }
 
+    // Enhanced ad detection and skipping system
+    function checkAndSkipAds() {
+        if (!player || typeof player.getDuration !== 'function') return;
+        
+        const currentDuration = player.getDuration();
+        const currentTime = player.getCurrentTime();
+        const now = Date.now();
+        
+        // Skip if we just tried to skip (prevent spam)
+        if (now - lastAdSkipTime < 2000) return;
+        
+        // Ad detection criteria:
+        // 1. Duration is significantly different from expected (officialVideoDuration)
+        // 2. We have an expected duration (not a new video)
+        // 3. Current duration suggests an ad (typically 15-30 seconds for ads vs 3+ minutes for content)
+        const hasExpectedDuration = officialVideoDuration > 0;
+        const durationMismatch = Math.abs(currentDuration - officialVideoDuration) > 10;
+        const likelyAd = currentDuration > 0 && currentDuration < 120; // Ads are usually under 2 minutes
+        const contentVideo = officialVideoDuration > 120; // Content is usually over 2 minutes
+        
+        if (hasExpectedDuration && durationMismatch && likelyAd && contentVideo) {
+            console.log(`[AD-SKIP] Detected ad: duration ${currentDuration}s vs expected ${officialVideoDuration}s`);
+            attemptAdSkip();
+        }
+    }
+    
+    function attemptAdSkip() {
+        const now = Date.now();
+        lastAdSkipTime = now;
+        adSkipAttempts++;
+        
+        console.log(`[AD-SKIP] Attempting to skip ad (attempt ${adSkipAttempts})`);
+        
+        // Method 1: Try to click the skip button
+        const skipButton = document.querySelector('.ytp-ad-skip-button, .ytp-skip-ad-button, .ytp-ad-skip-button-modern');
+        if (skipButton && skipButton.offsetParent !== null) {
+            console.log('[AD-SKIP] Found skip button, clicking');
+            skipButton.click();
+            return;
+        }
+        
+        // Method 2: Try to seek to the end of the ad
+        if (player && typeof player.getDuration === 'function') {
+            const duration = player.getDuration();
+            if (duration > 0 && duration < 120) {
+                console.log('[AD-SKIP] Seeking to end of ad');
+                player.seekTo(duration - 0.1, true);
+                return;
+            }
+        }
+        
+        // Method 3: Try to reload the video (last resort)
+        if (adSkipAttempts >= 3 && currentVideoId) {
+            console.log('[AD-SKIP] Multiple skip attempts failed, reloading video');
+            const currentTime = getExpectedCurrentTime();
+            player.loadVideoById(currentVideoId, currentTime);
+            adSkipAttempts = 0; // Reset counter
+        }
+    }
+    
+    function getExpectedCurrentTime() {
+        // For hosts: use their current position
+        if (isHost) {
+            return player.getCurrentTime();
+        }
+        
+        // For guests: estimate based on when the video started playing
+        // This is a fallback - in practice, sync will handle this
+        if (officialVideoDuration > 0) {
+            return Math.min(player.getCurrentTime(), officialVideoDuration);
+        }
+        
+        return 0;
+    }
+
+    // Enhanced TIME_UPDATE handling for ad detection
+    function handleTimeUpdate() {
+        if (!isHost || !player) return;
+        
+        // Check for ads during time updates too
+        checkAndSkipAds();
+        
+        const currentState = player.getPlayerState();
+        const hostTime = player.getCurrentTime();
+        
+        // Broadcast time updates to guests for synchronization
+        if (currentState === YT.PlayerState.PLAYING) {
+            broadcastData({ 
+                type: 'TIME_UPDATE', 
+                time: hostTime,
+                duration: player.getDuration(),
+                state: currentState 
+            });
+        }
+    }
+
     // --- THEATER MODE ---
     const theaterModeBtn = document.getElementById('theaterModeBtn');
     const theaterCloseBtn = document.getElementById('theaterCloseBtn');
@@ -1398,6 +1494,8 @@ let pendingMessages = [];
 let loadingNewVideo = false;
 let isManualPause = false;
 let guestTimePositions = {}; // Track guest positions for reverse sync
+let adSkipAttempts = 0; // Track ad skip attempts
+let lastAdSkipTime = 0; // Prevent spam clicking
 
     function handleUserAction(data) {
         // Clear sync flag for any user-initiated action
@@ -1653,6 +1751,15 @@ let guestTimePositions = {}; // Track guest positions for reverse sync
                     });
                 }
             }
+            
+            // Guest ad detection when starting to play
+            if (!isHost && player && officialVideoDuration > 0) {
+                const currentDuration = player.getDuration();
+                if (currentDuration > 0 && Math.abs(currentDuration - officialVideoDuration) > 10) {
+                    console.log(`[GUEST-AD] Ad detected on playback start: ${currentDuration}s vs expected ${officialVideoDuration}s`);
+                    attemptAdSkip();
+                }
+            }
         }
 
         // Remove hidden tab pause suppression - we want videos to keep playing
@@ -1668,6 +1775,9 @@ let guestTimePositions = {}; // Track guest positions for reverse sync
                 officialVideoDuration = duration;
                 broadcastData({ type: 'VIDEO_DURATION', duration: duration });
             }
+            
+            // Enhanced ad detection and skipping
+            checkAndSkipAds();
         }
 
         const actionData = { type: 'STATE_CHANGE', state, time: player.getCurrentTime(), userInitiated };
@@ -1887,6 +1997,16 @@ let guestTimePositions = {}; // Track guest positions for reverse sync
                         console.log("Heartbeat correcting to PAUSED state.");
                         isSyncingFromHost = true;
                         player.pauseVideo();
+                    }
+                    
+                    // Guest ad detection after time sync
+                    if (data.duration && data.duration > 0) {
+                        // Check if guest has different duration than expected
+                        const localDuration = player.getDuration();
+                        if (localDuration > 0 && Math.abs(localDuration - data.duration) > 10) {
+                            console.log(`[GUEST-AD] Duration mismatch detected: local ${localDuration}s vs host ${data.duration}s`);
+                            attemptAdSkip();
+                        }
                     }
                 }
                 break;
