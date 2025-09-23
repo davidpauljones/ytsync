@@ -768,17 +768,30 @@
     });
 
     // --- YOUTUBE API ---
-    window.onYouTubeIframeAPIReady = () => player = new YT.Player('player', {
-        videoId: '',
-        // Keep suggestions inside the iframe and improve UX
-        playerVars: {
-            rel: 0,
-            playsinline: 1,
-            modestbranding: 1,
-            origin: window.location.origin
-        },
-        events: { 'onStateChange': onPlayerStateChange }
-    });
+    window.onYouTubeIframeAPIReady = () => {
+        player = new YT.Player('player', {
+            videoId: '',
+            playerVars: {
+                rel: 0,
+                playsinline: 1,
+                modestbranding: 1,
+                origin: window.location.origin
+            },
+            events: { 
+                'onStateChange': onPlayerStateChange,
+                'onReady': () => {
+                    console.log('[YT] Player ready');
+                    playerReady = true;
+                    // Process any buffered messages
+                    console.log(`[YT] Processing ${pendingMessages.length} buffered messages`);
+                    while (pendingMessages.length > 0) {
+                        const { data, senderId } = pendingMessages.shift();
+                        handleReceivedData(data, senderId);
+                    }
+                }
+            }
+        });
+    };
     searchButton.addEventListener('click', searchYouTube);
     searchInput.addEventListener('keypress', e => e.key === 'Enter' && searchYouTube());
 
@@ -1268,6 +1281,8 @@
 let hostMigrationInProgress = false;
 let hostMigrationTimeout = null;
 let hostElectionLock = null;
+let playerReady = false;
+let pendingMessages = [];
 
     function handleUserAction(data) {
         if (isHost) {
@@ -1452,9 +1467,16 @@ let hostElectionLock = null;
     }
 
     function handleReceivedData(data, senderId) {
-        // Add player readiness check at the top
+        // Buffer messages if player isn't ready yet
+        if (!playerReady && (data.type.includes('VIDEO') || data.type === 'TIME_UPDATE' || data.type === 'STATE_CHANGE' || data.type === 'INITIAL_SYNC' || data.type === 'VIDEO_DURATION')) {
+            console.log(`[DATA] Buffering ${data.type} - player not ready yet`);
+            pendingMessages.push({ data, senderId });
+            return;
+        }
+        
+        // Additional safety check for player methods (in case playerReady flag is wrong)
         if (!player && (data.type.includes('VIDEO') || data.type === 'TIME_UPDATE' || data.type === 'STATE_CHANGE' || data.type === 'INITIAL_SYNC')) {
-            console.log(`[DATA] Ignoring ${data.type} - player not ready yet`);
+            console.log(`[DATA] Ignoring ${data.type} - player object not ready yet`);
             return;
         }
         
@@ -1495,7 +1517,6 @@ let hostElectionLock = null;
                     isSyncingFromHost = true;
                     if (data.state === YT.PlayerState.PLAYING) player.playVideo();
                     else if (data.state === YT.PlayerState.PAUSED) player.pauseVideo();
-
                 }, 1000);
                 videoQueue = data.queue;
                 updateQueueUI();
