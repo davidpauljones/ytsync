@@ -929,14 +929,16 @@
         
         // Method 1: Try to click the skip button - enhanced detection
         const skipButtonSelectors = [
+            '.ytp-ad-skip-button-modern.ytp-button',  // Your exact find!
+            '.ytp-ad-skip-button-modern',
             '.ytp-ad-skip-button',
             '.ytp-skip-ad-button', 
-            '.ytp-ad-skip-button-modern',
-            '.ytp-ad-skip-button-icon-modern',  // Specific class you found!
+            '.ytp-ad-skip-button-icon-modern',
             'button[class*="skip"]',
             '[class*="skip-button"]',
             '.ytp-ad-skip-button-container button',
-            '.ytp-ad-skip-button-container'
+            '.ytp-ad-skip-button-container',
+            '.ytp-button[class*="skip"]'  // Additional pattern based on your find
         ];
         
         let skipButton = null;
@@ -975,6 +977,15 @@
             }
             return;
         }
+        
+        // Debug: Log all buttons if skip button not found
+        console.log('[AD-SKIP] No skip button found, checking all available buttons:');
+        const allYtpButtons = document.querySelectorAll('button, [role="button"]');
+        allYtpButtons.forEach((btn, index) => {
+            if (btn.className.includes('ytp') || btn.textContent.toLowerCase().includes('skip')) {
+                console.log(`[AD-SKIP] Button ${index}: class="${btn.className}", text="${btn.textContent?.trim()}", visible=${btn.offsetParent !== null}`);
+            }
+        });
         
         // Method 1b: Try to find skip button by text content (fallback)
         const allButtons = document.querySelectorAll('button, div[role="button"], span[role="button"]');
@@ -1109,14 +1120,16 @@
         
         // Method 1: Try to skip ads using skip buttons - enhanced detection
         const skipButtonSelectors = [
+            '.ytp-ad-skip-button-modern.ytp-button',  // Your exact discovery!
+            '.ytp-ad-skip-button-modern',
             '.ytp-ad-skip-button',
             '.ytp-skip-ad-button', 
-            '.ytp-ad-skip-button-modern',
-            '.ytp-ad-skip-button-icon-modern',  // Your specific discovery!
+            '.ytp-ad-skip-button-icon-modern',
             'button[class*="skip"]',
             '[class*="skip-button"]',
             '.ytp-ad-skip-button-container button',
-            '.ytp-ad-skip-button-container'
+            '.ytp-ad-skip-button-container',
+            '.ytp-button[class*="skip"]'  // Additional pattern
         ];
         
         let skipButton = null;
@@ -1164,6 +1177,15 @@
             }, 2000);
             return;
         }
+        
+        // Debug: Log all buttons if skip button not found (guest version)
+        console.log('[GUEST-AD] No skip button found, checking all available buttons:');
+        const allGuestButtons = document.querySelectorAll('button, [role="button"]');
+        allGuestButtons.forEach((btn, index) => {
+            if (btn.className.includes('ytp') || btn.textContent.toLowerCase().includes('skip')) {
+                console.log(`[GUEST-AD] Button ${index}: class="${btn.className}", text="${btn.textContent?.trim()}", visible=${btn.offsetParent !== null}`);
+            }
+        });
         
         // Method 1b: Try to find skip button by text content (fallback)
         const allButtons = document.querySelectorAll('button, div[role="button"], span[role="button"]');
