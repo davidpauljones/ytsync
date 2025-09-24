@@ -927,12 +927,70 @@
         
         console.log(`[AD-SKIP] Attempting to skip ad (attempt ${adSkipAttempts})`);
         
-        // Method 1: Try to click the skip button
-        const skipButton = document.querySelector('.ytp-ad-skip-button, .ytp-skip-ad-button, .ytp-ad-skip-button-modern');
-        if (skipButton && skipButton.offsetParent !== null) {
-            console.log('[AD-SKIP] Found skip button, clicking');
-            skipButton.click();
+        // Method 1: Try to click the skip button - enhanced detection
+        const skipButtonSelectors = [
+            '.ytp-ad-skip-button',
+            '.ytp-skip-ad-button', 
+            '.ytp-ad-skip-button-modern',
+            '.ytp-ad-skip-button-icon-modern',  // Specific class you found!
+            'button[class*="skip"]',
+            '[class*="skip-button"]',
+            '.ytp-ad-skip-button-container button',
+            '.ytp-ad-skip-button-container'
+        ];
+        
+        let skipButton = null;
+        for (const selector of skipButtonSelectors) {
+            const element = document.querySelector(selector);
+            if (element && element.offsetParent !== null) {
+                skipButton = element;
+                console.log(`[AD-SKIP] Found skip element with selector: ${selector}`);
+                break;
+            }
+        }
+        
+        if (skipButton) {
+            console.log('[AD-SKIP] Clicking skip element');
+            
+            // Try multiple click methods
+            try {
+                skipButton.click();
+                
+                // Also try mouse event for better compatibility
+                const clickEvent = new MouseEvent('click', {
+                    bubbles: true,
+                    cancelable: true,
+                    view: window
+                });
+                skipButton.dispatchEvent(clickEvent);
+                
+                // If it's a container, try child button
+                const childButton = skipButton.querySelector('button');
+                if (childButton) {
+                    childButton.click();
+                }
+                
+            } catch (e) {
+                console.log('[AD-SKIP] Error clicking skip button:', e);
+            }
             return;
+        }
+        
+        // Method 1b: Try to find skip button by text content (fallback)
+        const allButtons = document.querySelectorAll('button, div[role="button"], span[role="button"]');
+        for (const button of allButtons) {
+            const text = button.textContent || button.innerText || '';
+            if (text.toLowerCase().includes('skip') && button.offsetParent !== null) {
+                console.log(`[AD-SKIP] Found skip button by text: "${text}"`);
+                try {
+                    button.click();
+                    const clickEvent = new MouseEvent('click', { bubbles: true, cancelable: true, view: window });
+                    button.dispatchEvent(clickEvent);
+                    return;
+                } catch (e) {
+                    console.log('[AD-SKIP] Error clicking text-based skip button:', e);
+                }
+            }
         }
         
         // Method 2: Try to seek to the end of the ad
@@ -1049,11 +1107,54 @@
         
         console.log(`[GUEST-AD] Attempting recovery (attempt ${adSkipAttempts})`);
         
-        // Method 1: Try to skip ads using skip buttons
-        const skipButton = document.querySelector('.ytp-ad-skip-button, .ytp-skip-ad-button, .ytp-ad-skip-button-modern');
-        if (skipButton && skipButton.offsetParent !== null) {
-            console.log('[GUEST-AD] Found skip button, clicking');
-            skipButton.click();
+        // Method 1: Try to skip ads using skip buttons - enhanced detection
+        const skipButtonSelectors = [
+            '.ytp-ad-skip-button',
+            '.ytp-skip-ad-button', 
+            '.ytp-ad-skip-button-modern',
+            '.ytp-ad-skip-button-icon-modern',  // Your specific discovery!
+            'button[class*="skip"]',
+            '[class*="skip-button"]',
+            '.ytp-ad-skip-button-container button',
+            '.ytp-ad-skip-button-container'
+        ];
+        
+        let skipButton = null;
+        for (const selector of skipButtonSelectors) {
+            const element = document.querySelector(selector);
+            if (element && element.offsetParent !== null) {
+                skipButton = element;
+                console.log(`[GUEST-AD] Found skip element with selector: ${selector}`);
+                break;
+            }
+        }
+        
+        if (skipButton) {
+            console.log('[GUEST-AD] Clicking skip element');
+            
+            // Try multiple click methods to ensure it works
+            try {
+                // Method 1: Direct click
+                skipButton.click();
+                
+                // Method 2: Mouse event (more realistic)
+                const clickEvent = new MouseEvent('click', {
+                    bubbles: true,
+                    cancelable: true,
+                    view: window
+                });
+                skipButton.dispatchEvent(clickEvent);
+                
+                // Method 3: If it's a parent container, try to find and click child button
+                const childButton = skipButton.querySelector('button');
+                if (childButton) {
+                    childButton.click();
+                }
+                
+            } catch (e) {
+                console.log('[GUEST-AD] Error clicking skip button:', e);
+            }
+            
             // Wait a bit to see if skip worked before trying other methods
             setTimeout(() => {
                 if (player.getPlayerState() === YT.PlayerState.UNSTARTED) {
@@ -1062,6 +1163,30 @@
                 }
             }, 2000);
             return;
+        }
+        
+        // Method 1b: Try to find skip button by text content (fallback)
+        const allButtons = document.querySelectorAll('button, div[role="button"], span[role="button"]');
+        for (const button of allButtons) {
+            const text = button.textContent || button.innerText || '';
+            if (text.toLowerCase().includes('skip') && button.offsetParent !== null) {
+                console.log(`[GUEST-AD] Found skip button by text: "${text}"`);
+                try {
+                    button.click();
+                    const clickEvent = new MouseEvent('click', { bubbles: true, cancelable: true, view: window });
+                    button.dispatchEvent(clickEvent);
+                    
+                    setTimeout(() => {
+                        if (player.getPlayerState() === YT.PlayerState.UNSTARTED) {
+                            console.log('[GUEST-AD] Text skip button didn\'t work, trying other methods');
+                            attemptAdvancedAdSkip();
+                        }
+                    }, 2000);
+                    return;
+                } catch (e) {
+                    console.log('[GUEST-AD] Error clicking text-based skip button:', e);
+                }
+            }
         }
         
         // Method 2: Try alternative ad skipping methods
