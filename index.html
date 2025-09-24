@@ -1219,43 +1219,61 @@
         const duration = player ? player.getDuration() : 0;
         const currentTime = player ? player.getCurrentTime() : 0;
         
+        console.log(`[ADVANCED-SKIP] Starting advanced skip: duration=${duration}, time=${currentTime}`);
+        
         // Method 1: Try seeking past short ads (but be more careful)
         if (duration > 0 && duration < 60 && currentTime < duration - 1) {
-            console.log('[GUEST-AD] Seeking to end of short ad');
+            console.log('[ADVANCED-SKIP] Seeking to end of short ad');
             player.seekTo(duration - 0.5, true);
             return;
         }
         
-        // Method 2: Try the YouTube HTML5 API to skip ads
-        try {
-            if (typeof window.ytInitialPlayerResponse !== 'undefined') {
-                // Try to trigger ad skip through YouTube's internal API
-                const iframe = document.querySelector('#player iframe');
-                if (iframe && iframe.contentWindow) {
-                    // Try to send skip command to iframe
-                    iframe.contentWindow.postMessage('{"event":"command","func":"skipAd","args":""}', '*');
-                    console.log('[GUEST-AD] Sent skip command to player iframe');
-                    return;
-                }
+        // Method 2: Try direct iframe interaction
+        const iframe = document.querySelector('#player iframe');
+        if (iframe) {
+            console.log('[ADVANCED-SKIP] Attempting iframe-based ad skip');
+            try {
+                // Try multiple iframe skip approaches
+                const messages = [
+                    '{"event":"command","func":"skipAd","args":""}',
+                    '{"event":"command","func":"seekTo","args":[999999, true]}',
+                    '{"event":"command","func":"nextVideo","args":""}',
+                    'SKIP_AD'
+                ];
+                
+                messages.forEach((msg, index) => {
+                    setTimeout(() => {
+                        iframe.contentWindow?.postMessage(msg, '*');
+                        console.log(`[ADVANCED-SKIP] Sent message ${index + 1}: ${msg}`);
+                    }, index * 500);
+                });
+            } catch (e) {
+                console.log('[ADVANCED-SKIP] Iframe message failed:', e);
             }
-        } catch (e) {
-            console.log('[GUEST-AD] Could not access YouTube skip API');
         }
         
-        // Method 3: Try pressing ESC key to close ad overlay
-        try {
-            const escEvent = new KeyboardEvent('keydown', {
-                key: 'Escape',
-                code: 'Escape',
-                keyCode: 27,
-                which: 27,
-                bubbles: true
-            });
-            document.dispatchEvent(escEvent);
-            console.log('[GUEST-AD] Sent ESC key to close ad overlay');
-        } catch (e) {
-            console.log('[GUEST-AD] Could not send ESC key');
-        }
+        // Method 3: Try keyboard shortcuts
+        setTimeout(() => {
+            console.log('[ADVANCED-SKIP] Trying keyboard shortcuts');
+            try {
+                // Try Tab + Enter (common skip pattern)
+                const tabEvent = new KeyboardEvent('keydown', { key: 'Tab', keyCode: 9, bubbles: true });
+                const enterEvent = new KeyboardEvent('keydown', { key: 'Enter', keyCode: 13, bubbles: true });
+                
+                document.dispatchEvent(tabEvent);
+                setTimeout(() => document.dispatchEvent(enterEvent), 100);
+                
+                // Also try space bar and escape
+                const spaceEvent = new KeyboardEvent('keydown', { key: ' ', keyCode: 32, bubbles: true });
+                const escEvent = new KeyboardEvent('keydown', { key: 'Escape', keyCode: 27, bubbles: true });
+                
+                setTimeout(() => document.dispatchEvent(spaceEvent), 200);
+                setTimeout(() => document.dispatchEvent(escEvent), 300);
+                
+            } catch (e) {
+                console.log('[ADVANCED-SKIP] Keyboard events failed:', e);
+            }
+        }, 1000);
         
         // Method 4: LAST RESORT - Reload video only after many failed attempts and with backoff
         if (adSkipAttempts >= 5 && currentVideoId) {
@@ -1299,7 +1317,33 @@
                 const state = player.getPlayerState();
                 // Check for ads if we're stuck in buffering or unstarted state
                 if (state === YT.PlayerState.BUFFERING || state === YT.PlayerState.UNSTARTED) {
-                    console.log('[AD-DETECT] Timer check during loading state:', YT_STATE[state]);
+                    console.log(`[AD-DETECT] Timer check during loading state: ${YT_STATE[state]}`);
+                    
+                    // Enhanced diagnostic information
+                    const duration = player.getDuration();
+                    const currentTime = player.getCurrentTime();
+                    const videoData = player.getVideoData();
+                    
+                    console.log(`[AD-DETECT] Player details: duration=${duration}, time=${currentTime}, videoId=${videoData?.video_id}`);
+                    console.log(`[AD-DETECT] Expected: currentVideoId=${currentVideoId}, officialDuration=${officialVideoDuration}`);
+                    
+                    // Check for any ad-related DOM elements
+                    const adElements = {
+                        skipButton: document.querySelector('.ytp-ad-skip-button-modern.ytp-button'),
+                        skipButtonAlt: document.querySelector('.ytp-ad-skip-button'),
+                        adOverlay: document.querySelector('.ytp-ad-overlay-container'),
+                        adText: document.querySelector('.ytp-ad-text'),
+                        adModule: document.querySelector('.ytp-ad-module')
+                    };
+                    
+                    console.log('[AD-DETECT] Ad elements found:', Object.fromEntries(
+                        Object.entries(adElements).map(([key, element]) => [key, !!element])
+                    ));
+                    
+                    // Check if controls are hidden
+                    const controlsHidden = arePlayerControlsHidden();
+                    console.log(`[AD-DETECT] Controls hidden: ${controlsHidden}`);
+                    
                     checkAndSkipAds();
                 } else if (state === YT.PlayerState.PLAYING) {
                     // Stop timer when video is playing normally
@@ -1338,6 +1382,19 @@
                 const state = player.getPlayerState();
                 // Check for issues if stuck in problematic states
                 if (state === YT.PlayerState.UNSTARTED || state === YT.PlayerState.BUFFERING) {
+                    console.log(`[GUEST-TIMER] Recovery timer check: state=${YT_STATE[state]}`);
+                    
+                    // Enhanced diagnostic for guest
+                    const duration = player.getDuration();
+                    const currentTime = player.getCurrentTime();
+                    const videoData = player.getVideoData();
+                    
+                    console.log(`[GUEST-TIMER] Player details: duration=${duration}, time=${currentTime}, videoId=${videoData?.video_id}`);
+                    
+                    // Check iframe accessibility
+                    const iframe = document.querySelector('#player iframe');
+                    console.log(`[GUEST-TIMER] Iframe found: ${!!iframe}, src: ${iframe?.src}`);
+                    
                     checkGuestAdRecovery();
                 }
             }
