@@ -1313,9 +1313,13 @@
         
         // Start checking for ads every 3 seconds during loading
         adDetectionTimer = setInterval(() => {
-            if (isHost && player) {
+            console.log(`[AD-DETECT-DEBUG] Timer tick - isHost: ${isHost}, player: ${!!player}`);
+            
+            if (player) {
                 const state = player.getPlayerState();
-                // Check for ads if we're stuck in buffering or unstarted state
+                console.log(`[AD-DETECT-DEBUG] Player state: ${state} (${YT_STATE[state]})`);
+                
+                // Check for ads if we're stuck in buffering or unstarted state (for both hosts and guests)
                 if (state === YT.PlayerState.BUFFERING || state === YT.PlayerState.UNSTARTED) {
                     console.log(`[AD-DETECT] Timer check during loading state: ${YT_STATE[state]}`);
                     
@@ -1344,12 +1348,19 @@
                     const controlsHidden = arePlayerControlsHidden();
                     console.log(`[AD-DETECT] Controls hidden: ${controlsHidden}`);
                     
-                    checkAndSkipAds();
+                    if (isHost) {
+                        checkAndSkipAds();
+                    } else {
+                        checkGuestAdRecovery();
+                    }
                 } else if (state === YT.PlayerState.PLAYING) {
+                    console.log('[AD-DETECT] Video playing, stopping timer');
                     // Stop timer when video is playing normally
                     clearInterval(adDetectionTimer);
                     adDetectionTimer = null;
                 }
+            } else {
+                console.log('[AD-DETECT-DEBUG] No player object available');
             }
         }, 3000);
         
@@ -2055,11 +2066,11 @@ let lastRecoveryTime = 0; // Track when last recovery was attempted
             if (player && typeof player.loadVideoById === 'function') {
                 player.loadVideoById(data.videoId);
                 
-                // Start ad detection timer for hosts
-                if (isHost) {
-                    startAdDetectionTimer();
-                } else {
-                    // Start recovery timer for guests
+                // Start ad detection timer for both hosts and guests
+                startAdDetectionTimer();
+                
+                // Also start recovery timer for guests
+                if (!isHost) {
                     startGuestRecoveryTimer();
                 }
                 
@@ -2404,10 +2415,8 @@ let lastRecoveryTime = 0; // Track when last recovery was attempted
                 if (player.getVideoData()?.video_id !== data.videoId) {
                     player.loadVideoById(data.videoId, data.time);
                     
-                    // Start ad detection timer for hosts during INITIAL_SYNC
-                    if (isHost) {
-                        startAdDetectionTimer();
-                    }
+                    // Start ad detection timer for both hosts and guests during INITIAL_SYNC
+                    startAdDetectionTimer();
                 } else {
                     player.seekTo(data.time, true);
                 }
