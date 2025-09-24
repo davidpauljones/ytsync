@@ -914,6 +914,14 @@
             reason = `very short duration: ${currentDuration}s (likely ad)`;
         }
         
+        // Method 5: UNSTARTED state with progressing time (YouTube pre-roll ad quirk)
+        const playerState = player.getPlayerState();
+        if (playerState === YT.PlayerState.UNSTARTED && currentTime > 0 && currentTime < 60 && 
+            officialVideoDuration > 0 && currentDuration === officialVideoDuration) {
+            adDetected = true;
+            reason = `UNSTARTED state with progressing time: ${currentTime.toFixed(1)}s (pre-roll ad)`;
+        }
+
         if (adDetected) {
             console.log(`[AD-SKIP] Detected ad: ${reason}`);
             attemptAdSkip();
