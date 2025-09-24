@@ -1328,6 +1328,13 @@
                     const currentTime = player.getCurrentTime();
                     const videoData = player.getVideoData();
                     
+                    // Capture video duration if it's available and we don't have it yet (for hosts)
+                    if (isHost && duration > 0 && (officialVideoDuration === 0 || Math.abs(duration - officialVideoDuration) > 1)) {
+                        console.log(`[DURATION] Capturing video duration from timer: ${duration}s (was ${officialVideoDuration}s)`);
+                        officialVideoDuration = duration;
+                        broadcastData({ type: 'VIDEO_DURATION', duration: duration });
+                    }
+                    
                     console.log(`[AD-DETECT] Player details: duration=${duration}, time=${currentTime}, videoId=${videoData?.video_id}`);
                     console.log(`[AD-DETECT] Expected: currentVideoId=${currentVideoId}, officialDuration=${officialVideoDuration}`);
                     
@@ -2260,6 +2267,16 @@ let lastRecoveryTime = 0; // Track when last recovery was attempted
             hideUpNextOverlay();
         } else if (state === YT.PlayerState.CUED) {
             updateVideoTitle();
+            
+            // Capture video duration when video is cued (metadata available)
+            if (isHost && player) {
+                const duration = player.getDuration();
+                if (duration > 0 && Math.abs(duration - officialVideoDuration) > 1) {
+                    console.log(`[DURATION] Capturing video duration from CUED state: ${duration}s`);
+                    officialVideoDuration = duration;
+                    broadcastData({ type: 'VIDEO_DURATION', duration: duration });
+                }
+            }
         }
 
         if (isHost && intentToAutoPlay && state === YT.PlayerState.CUED) {
