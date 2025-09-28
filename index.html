@@ -453,6 +453,11 @@
     let lastPlayerState = -1;
     let officialVideoDuration = 0;
     let hostHeartbeatInterval;
+    let connectionKeepaliveInterval;
+    let connectionMonitorInterval;
+    const CONNECTION_KEEPALIVE_INTERVAL = 30000; // 30 seconds
+    const CONNECTION_MONITOR_INTERVAL = 5000; // 5 seconds
+    let lastKeepaliveReceived = {}; // Track last keepalive from each peer
     let lastUserActionTimestamp = 0;
     let intentToAutoPlay = false;
     let localUserList = {};
@@ -464,13 +469,20 @@
     // Track the currently loaded videoId
     let currentVideoId = null;
 
-    // WebRTC configuration (add TURN here for reliability)
+    // WebRTC configuration (enhanced for stability)
     const rtcConfig = {
         iceServers: [
-            { urls: ['stun:stun.l.google.com:19302','stun:stun1.l.google.com:19302','stun:stun2.l.google.com:19302'] }
+            { urls: ['stun:stun.l.google.com:19302','stun:stun1.l.google.com:19302','stun:stun2.l.google.com:19302'] },
+            // Add more STUN servers for redundancy
+            { urls: 'stun:stun.services.mozilla.com' },
+            { urls: 'stun:stun.stunprotocol.org:3478' }
         ],
-        iceCandidatePoolSize: 2,
-        iceTransportPolicy: 'all'
+        iceCandidatePoolSize: 4, // Increased for better connectivity
+        iceTransportPolicy: 'all',
+        // Add bundle policy for better connection stability
+        bundlePolicy: 'balanced',
+        // Add RTC configuration for better keepalive
+        rtcpMuxPolicy: 'require'
     };
 
     // Helpful mapping for logging YT state numbers
@@ -859,177 +871,42 @@
     }
 
     // Enhanced ad detection and skipping system
-    function checkAndSkipAds() {
-        if (!player || typeof player.getDuration !== 'function') return;
+    function isAdPlaying() {
+        if (!player || typeof player.getDuration !== 'function') return false;
         
         const currentDuration = player.getDuration();
         const currentTime = player.getCurrentTime();
-        const now = Date.now();
-        
-        // Skip if we just tried to skip (prevent spam)
-        if (now - lastAdSkipTime < 2000) return;
-        
-        // Enhanced ad detection criteria:
-        let adDetected = false;
-        let reason = '';
+        const playerState = player.getPlayerState();
         
         // Method 1: Duration comparison (if we have expected duration)
         if (officialVideoDuration > 0) {
-            const hasExpectedDuration = officialVideoDuration > 0;
             const durationMismatch = Math.abs(currentDuration - officialVideoDuration) > 10;
             const likelyAd = currentDuration > 0 && currentDuration < 120;
             const contentVideo = officialVideoDuration > 120;
             
-            if (hasExpectedDuration && durationMismatch && likelyAd && contentVideo) {
-                adDetected = true;
-                reason = `duration mismatch: ${currentDuration}s vs expected ${officialVideoDuration}s`;
+            if (durationMismatch && likelyAd && contentVideo) {
+                console.log(`[AD-DETECT] Ad detected: duration mismatch ${currentDuration}s vs expected ${officialVideoDuration}s`);
+                return true;
             }
         }
         
-        // Method 2: Ad indicators in DOM (more aggressive)
-        const adIndicators = [
-            '.ytp-ad-skip-button',
-            '.ytp-skip-ad-button',
-            '.ytp-ad-skip-button-modern',
-            '.ytp-ad-overlay-container',
-            '.ytp-ad-text',
-            '.ytp-ad-player-overlay'
-        ];
-        
-        const hasAdIndicator = adIndicators.some(selector => document.querySelector(selector));
-        if (hasAdIndicator) {
-            adDetected = true;
-            reason = 'DOM ad indicators found';
-        }
-        
-        // Method 3: Player controls visibility check (excellent ad detection!)
-        if (arePlayerControlsHidden() && currentDuration > 0) {
-            adDetected = true;
-            reason = 'player controls hidden (ad overlay detected)';
-        }
-        
-        // Method 4: Very short durations are likely ads (even without officialVideoDuration)
-        if (currentDuration > 0 && currentDuration <= 30 && currentTime < 25) {
-            adDetected = true;
-            reason = `very short duration: ${currentDuration}s (likely ad)`;
-        }
-        
-        // Method 5: UNSTARTED state with progressing time (YouTube pre-roll ad quirk)
-        const playerState = player.getPlayerState();
+        // Method 2: UNSTARTED state with progressing time (YouTube pre-roll ad quirk)
         if (playerState === YT.PlayerState.UNSTARTED && currentTime > 0 && currentTime < 60 && 
             officialVideoDuration > 0 && currentDuration === officialVideoDuration) {
-            adDetected = true;
-            reason = `UNSTARTED state with progressing time: ${currentTime.toFixed(1)}s (pre-roll ad)`;
+            console.log(`[AD-DETECT] Ad detected: UNSTARTED state with progressing time ${currentTime.toFixed(1)}s`);
+            return true;
         }
-
-        if (adDetected) {
-            console.log(`[AD-SKIP] Detected ad: ${reason}`);
-            attemptAdSkip();
+        
+        // Method 3: Very short durations are likely ads
+        if (currentDuration > 0 && currentDuration <= 30 && currentTime < 25) {
+            console.log(`[AD-DETECT] Ad detected: short duration ${currentDuration}s`);
+            return true;
         }
+        
+        return false;
     }
     
-    function attemptAdSkip() {
-        const now = Date.now();
-        lastAdSkipTime = now;
-        adSkipAttempts++;
-        
-        console.log(`[AD-SKIP] Attempting to skip ad (attempt ${adSkipAttempts})`);
-        
-        // Method 1: Try to click the skip button - enhanced detection
-        const skipButtonSelectors = [
-            '.ytp-ad-skip-button-modern.ytp-button',  // Your exact find!
-            '.ytp-ad-skip-button-modern',
-            '.ytp-ad-skip-button',
-            '.ytp-skip-ad-button', 
-            '.ytp-ad-skip-button-icon-modern',
-            'button[class*="skip"]',
-            '[class*="skip-button"]',
-            '.ytp-ad-skip-button-container button',
-            '.ytp-ad-skip-button-container',
-            '.ytp-button[class*="skip"]'  // Additional pattern based on your find
-        ];
-        
-        let skipButton = null;
-        for (const selector of skipButtonSelectors) {
-            const element = document.querySelector(selector);
-            if (element && element.offsetParent !== null) {
-                skipButton = element;
-                console.log(`[AD-SKIP] Found skip element with selector: ${selector}`);
-                break;
-            }
-        }
-        
-        if (skipButton) {
-            console.log('[AD-SKIP] Clicking skip element');
-            
-            // Try multiple click methods
-            try {
-                skipButton.click();
-                
-                // Also try mouse event for better compatibility
-                const clickEvent = new MouseEvent('click', {
-                    bubbles: true,
-                    cancelable: true,
-                    view: window
-                });
-                skipButton.dispatchEvent(clickEvent);
-                
-                // If it's a container, try child button
-                const childButton = skipButton.querySelector('button');
-                if (childButton) {
-                    childButton.click();
-                }
-                
-            } catch (e) {
-                console.log('[AD-SKIP] Error clicking skip button:', e);
-            }
-            return;
-        }
-        
-        // Debug: Log all buttons if skip button not found
-        console.log('[AD-SKIP] No skip button found, checking all available buttons:');
-        const allYtpButtons = document.querySelectorAll('button, [role="button"]');
-        allYtpButtons.forEach((btn, index) => {
-            if (btn.className.includes('ytp') || btn.textContent.toLowerCase().includes('skip')) {
-                console.log(`[AD-SKIP] Button ${index}: class="${btn.className}", text="${btn.textContent?.trim()}", visible=${btn.offsetParent !== null}`);
-            }
-        });
-        
-        // Method 1b: Try to find skip button by text content (fallback)
-        const allButtons = document.querySelectorAll('button, div[role="button"], span[role="button"]');
-        for (const button of allButtons) {
-            const text = button.textContent || button.innerText || '';
-            if (text.toLowerCase().includes('skip') && button.offsetParent !== null) {
-                console.log(`[AD-SKIP] Found skip button by text: "${text}"`);
-                try {
-                    button.click();
-                    const clickEvent = new MouseEvent('click', { bubbles: true, cancelable: true, view: window });
-                    button.dispatchEvent(clickEvent);
-                    return;
-                } catch (e) {
-                    console.log('[AD-SKIP] Error clicking text-based skip button:', e);
-                }
-            }
-        }
-        
-        // Method 2: Try to seek to the end of the ad
-        if (player && typeof player.getDuration === 'function') {
-            const duration = player.getDuration();
-            if (duration > 0 && duration < 120) {
-                console.log('[AD-SKIP] Seeking to end of ad');
-                player.seekTo(duration - 0.1, true);
-                return;
-            }
-        }
-        
-        // Method 3: Try to reload the video (last resort)
-        if (adSkipAttempts >= 3 && currentVideoId) {
-            console.log('[AD-SKIP] Multiple skip attempts failed, reloading video');
-            const currentTime = getExpectedCurrentTime();
-            player.loadVideoById(currentVideoId, currentTime);
-            adSkipAttempts = 0; // Reset counter
-        }
-    }
+
     
     function getExpectedCurrentTime() {
         // For hosts: use their current position
@@ -1046,269 +923,11 @@
         return 0;
     }
     
-    // Guest-specific ad detection and recovery
-    function checkGuestAdRecovery() {
-        if (isHost || !player) return;
-        
-        const playerState = player.getPlayerState();
-        const currentDuration = player.getDuration();
-        const now = Date.now();
-        
-        // Global recovery throttling - prevent too many recovery attempts in session
-        if (totalRecoveryAttempts >= 10) {
-            console.log('[GUEST-AD] Too many recovery attempts this session, backing off');
-            return;
-        }
-        
-        // Skip if we just tried to recover (prevent spam) - increased throttle
-        if (now - lastAdSkipTime < 5000) return;
-        
-        // Also throttle based on when we last attempted any recovery
-        if (now - lastRecoveryTime < 10000) {
-            console.log('[GUEST-AD] Recent recovery attempt, waiting longer...');
-            return;
-        }
-        
-        console.log(`[GUEST-AD] Checking recovery: state=${YT_STATE[playerState]}, duration=${currentDuration}s`);
-        
-        // Guest ad detection scenarios:
-        let adDetected = false;
-        let reason = '';
-        
-        // Scenario 1: Player stuck in UNSTARTED state (but be more careful)
-        if (playerState === YT.PlayerState.UNSTARTED && currentVideoId && totalRecoveryAttempts < 5) {
-            adDetected = true;
-            reason = 'stuck in UNSTARTED state with video ID';
-        }
-        
-        // Scenario 2: DOM ad indicators
-        const adIndicators = [
-            '.ytp-ad-skip-button',
-            '.ytp-ad-overlay-container',
-            '.ytp-ad-text'
-        ];
-        if (adIndicators.some(selector => document.querySelector(selector))) {
-            adDetected = true;
-            reason = 'DOM ad indicators found';
-        }
-        
-        // Scenario 3: Player controls visibility check (your excellent discovery!)
-        if (arePlayerControlsHidden()) {
-            adDetected = true;
-            reason = 'player controls hidden - ad overlay detected';
-        }
-        
-        // Scenario 4: Very short duration suggesting ads
-        if (currentDuration > 0 && currentDuration <= 60 && playerState !== YT.PlayerState.PLAYING) {
-            adDetected = true;
-            reason = `short duration ${currentDuration}s in non-playing state`;
-        }
-        
-        // Scenario 5: Expected sync but player not responding (only if we haven't tried much)
-        if (officialVideoDuration > 0 && currentDuration > 0 && 
-            Math.abs(currentDuration - officialVideoDuration) > 30 && totalRecoveryAttempts < 3) {
-            adDetected = true;
-            reason = `major duration mismatch: ${currentDuration}s vs expected ${officialVideoDuration}s`;
-        }
-        
-        if (adDetected) {
-            console.log(`[GUEST-AD] Ad/loading issue detected: ${reason}`);
-            totalRecoveryAttempts++;
-            lastRecoveryTime = now;
-            attemptGuestRecovery();
-        }
-    }
+
     
-    function attemptGuestRecovery() {
-        const now = Date.now();
-        lastAdSkipTime = now;
-        adSkipAttempts++;
-        
-        console.log(`[GUEST-AD] Attempting recovery (attempt ${adSkipAttempts})`);
-        
-        // Method 1: Try to skip ads using skip buttons - enhanced detection
-        const skipButtonSelectors = [
-            '.ytp-ad-skip-button-modern.ytp-button',  // Your exact discovery!
-            '.ytp-ad-skip-button-modern',
-            '.ytp-ad-skip-button',
-            '.ytp-skip-ad-button', 
-            '.ytp-ad-skip-button-icon-modern',
-            'button[class*="skip"]',
-            '[class*="skip-button"]',
-            '.ytp-ad-skip-button-container button',
-            '.ytp-ad-skip-button-container',
-            '.ytp-button[class*="skip"]'  // Additional pattern
-        ];
-        
-        let skipButton = null;
-        for (const selector of skipButtonSelectors) {
-            const element = document.querySelector(selector);
-            if (element && element.offsetParent !== null) {
-                skipButton = element;
-                console.log(`[GUEST-AD] Found skip element with selector: ${selector}`);
-                break;
-            }
-        }
-        
-        if (skipButton) {
-            console.log('[GUEST-AD] Clicking skip element');
-            
-            // Try multiple click methods to ensure it works
-            try {
-                // Method 1: Direct click
-                skipButton.click();
-                
-                // Method 2: Mouse event (more realistic)
-                const clickEvent = new MouseEvent('click', {
-                    bubbles: true,
-                    cancelable: true,
-                    view: window
-                });
-                skipButton.dispatchEvent(clickEvent);
-                
-                // Method 3: If it's a parent container, try to find and click child button
-                const childButton = skipButton.querySelector('button');
-                if (childButton) {
-                    childButton.click();
-                }
-                
-            } catch (e) {
-                console.log('[GUEST-AD] Error clicking skip button:', e);
-            }
-            
-            // Wait a bit to see if skip worked before trying other methods
-            setTimeout(() => {
-                if (player.getPlayerState() === YT.PlayerState.UNSTARTED) {
-                    console.log('[GUEST-AD] Skip button didn\'t work, trying other methods');
-                    attemptAdvancedAdSkip();
-                }
-            }, 2000);
-            return;
-        }
-        
-        // Debug: Log all buttons if skip button not found (guest version)
-        console.log('[GUEST-AD] No skip button found, checking all available buttons:');
-        const allGuestButtons = document.querySelectorAll('button, [role="button"]');
-        allGuestButtons.forEach((btn, index) => {
-            if (btn.className.includes('ytp') || btn.textContent.toLowerCase().includes('skip')) {
-                console.log(`[GUEST-AD] Button ${index}: class="${btn.className}", text="${btn.textContent?.trim()}", visible=${btn.offsetParent !== null}`);
-            }
-        });
-        
-        // Method 1b: Try to find skip button by text content (fallback)
-        const allButtons = document.querySelectorAll('button, div[role="button"], span[role="button"]');
-        for (const button of allButtons) {
-            const text = button.textContent || button.innerText || '';
-            if (text.toLowerCase().includes('skip') && button.offsetParent !== null) {
-                console.log(`[GUEST-AD] Found skip button by text: "${text}"`);
-                try {
-                    button.click();
-                    const clickEvent = new MouseEvent('click', { bubbles: true, cancelable: true, view: window });
-                    button.dispatchEvent(clickEvent);
-                    
-                    setTimeout(() => {
-                        if (player.getPlayerState() === YT.PlayerState.UNSTARTED) {
-                            console.log('[GUEST-AD] Text skip button didn\'t work, trying other methods');
-                            attemptAdvancedAdSkip();
-                        }
-                    }, 2000);
-                    return;
-                } catch (e) {
-                    console.log('[GUEST-AD] Error clicking text-based skip button:', e);
-                }
-            }
-        }
-        
-        // Method 2: Try alternative ad skipping methods
-        attemptAdvancedAdSkip();
-    }
+
     
-    function attemptAdvancedAdSkip() {
-        const duration = player ? player.getDuration() : 0;
-        const currentTime = player ? player.getCurrentTime() : 0;
-        
-        console.log(`[ADVANCED-SKIP] Starting advanced skip: duration=${duration}, time=${currentTime}`);
-        
-        // Method 1: Try seeking past short ads (but be more careful)
-        if (duration > 0 && duration < 60 && currentTime < duration - 1) {
-            console.log('[ADVANCED-SKIP] Seeking to end of short ad');
-            player.seekTo(duration - 0.5, true);
-            return;
-        }
-        
-        // Method 2: Try direct iframe interaction
-        const iframe = document.querySelector('#player iframe');
-        if (iframe) {
-            console.log('[ADVANCED-SKIP] Attempting iframe-based ad skip');
-            try {
-                // Try multiple iframe skip approaches
-                const messages = [
-                    '{"event":"command","func":"skipAd","args":""}',
-                    '{"event":"command","func":"seekTo","args":[999999, true]}',
-                    '{"event":"command","func":"nextVideo","args":""}',
-                    'SKIP_AD'
-                ];
-                
-                messages.forEach((msg, index) => {
-                    setTimeout(() => {
-                        iframe.contentWindow?.postMessage(msg, '*');
-                        console.log(`[ADVANCED-SKIP] Sent message ${index + 1}: ${msg}`);
-                    }, index * 500);
-                });
-            } catch (e) {
-                console.log('[ADVANCED-SKIP] Iframe message failed:', e);
-            }
-        }
-        
-        // Method 3: Try keyboard shortcuts
-        setTimeout(() => {
-            console.log('[ADVANCED-SKIP] Trying keyboard shortcuts');
-            try {
-                // Try Tab + Enter (common skip pattern)
-                const tabEvent = new KeyboardEvent('keydown', { key: 'Tab', keyCode: 9, bubbles: true });
-                const enterEvent = new KeyboardEvent('keydown', { key: 'Enter', keyCode: 13, bubbles: true });
-                
-                document.dispatchEvent(tabEvent);
-                setTimeout(() => document.dispatchEvent(enterEvent), 100);
-                
-                // Also try space bar and escape
-                const spaceEvent = new KeyboardEvent('keydown', { key: ' ', keyCode: 32, bubbles: true });
-                const escEvent = new KeyboardEvent('keydown', { key: 'Escape', keyCode: 27, bubbles: true });
-                
-                setTimeout(() => document.dispatchEvent(spaceEvent), 200);
-                setTimeout(() => document.dispatchEvent(escEvent), 300);
-                
-            } catch (e) {
-                console.log('[ADVANCED-SKIP] Keyboard events failed:', e);
-            }
-        }, 1000);
-        
-        // Method 4: LAST RESORT - Reload video only after many failed attempts and with backoff
-        if (adSkipAttempts >= 5 && currentVideoId) {
-            console.log('[GUEST-AD] Last resort: reloading video after multiple skip failures');
-            
-            // Add exponential backoff to prevent rapid reloading
-            const backoffDelay = Math.min(5000 + (adSkipAttempts * 2000), 15000);
-            
-            setTimeout(() => {
-                // Only reload if we're still stuck
-                if (player.getPlayerState() === YT.PlayerState.UNSTARTED) {
-                    player.loadVideoById(currentVideoId, 0);
-                    
-                    // Reset attempts and request sync after a longer delay
-                    setTimeout(() => {
-                        adSkipAttempts = 0;
-                        const requestData = { type: 'REQUEST_POSITION' };
-                        const hostChannel = dataChannels['host'];
-                        if (hostChannel && hostChannel.readyState === 'open') {
-                            hostChannel.send(JSON.stringify(requestData));
-                            console.log('[GUEST-AD] Requested fresh sync after forced reload');
-                        }
-                    }, 3000);
-                }
-            }, backoffDelay);
-        }
-    }
+
 
     // Timer-based ad detection for stuck loading states
     let adDetectionTimer = null;
@@ -1364,9 +983,14 @@
                     console.log(`[AD-DETECT] Controls hidden: ${controlsHidden}`);
                     
                     if (isHost) {
-                        checkAndSkipAds();
+                        // Check if ad is playing but don't try to skip it
+                        const adPlaying = isAdPlaying();
+                        if (adPlaying) {
+                            console.log('[SYNC] Host detected ad playing, avoiding sync broadcasts');
+                        }
                     } else {
-                        checkGuestAdRecovery();
+                        // Guest just waits for host sync instead of trying recovery
+                        console.log(`[AD-DETECT] Guest detected potential ad state, waiting for host sync`);
                     }
                 } else if (state === YT.PlayerState.PLAYING) {
                     console.log('[AD-DETECT] Video playing, stopping timer');
@@ -1390,58 +1014,20 @@
     }
     
     // Guest recovery timer for ad issues
-    let guestRecoveryTimer = null;
+
     
-    function startGuestRecoveryTimer() {
-        if (isHost) return; // Only for guests
-        
-        // Clear any existing timer
-        if (guestRecoveryTimer) {
-            clearInterval(guestRecoveryTimer);
-        }
-        
-        console.log('[GUEST-AD] Starting recovery timer');
-        
-        // Check for recovery needs every 5 seconds
-        guestRecoveryTimer = setInterval(() => {
-            if (!isHost && player) {
-                const state = player.getPlayerState();
-                // Check for issues if stuck in problematic states
-                if (state === YT.PlayerState.UNSTARTED || state === YT.PlayerState.BUFFERING) {
-                    console.log(`[GUEST-TIMER] Recovery timer check: state=${YT_STATE[state]}`);
-                    
-                    // Enhanced diagnostic for guest
-                    const duration = player.getDuration();
-                    const currentTime = player.getCurrentTime();
-                    const videoData = player.getVideoData();
-                    
-                    console.log(`[GUEST-TIMER] Player details: duration=${duration}, time=${currentTime}, videoId=${videoData?.video_id}`);
-                    
-                    // Check iframe accessibility
-                    const iframe = document.querySelector('#player iframe');
-                    console.log(`[GUEST-TIMER] Iframe found: ${!!iframe}, src: ${iframe?.src}`);
-                    
-                    checkGuestAdRecovery();
-                }
-            }
-        }, 5000);
-        
-        // Clear timer after 60 seconds to prevent infinite running
-        setTimeout(() => {
-            if (guestRecoveryTimer) {
-                clearInterval(guestRecoveryTimer);
-                guestRecoveryTimer = null;
-                console.log('[GUEST-AD] Recovery timer cleared after 60 seconds');
-            }
-        }, 60000);
-    }
+
 
     // Enhanced TIME_UPDATE handling for ad detection
     function handleTimeUpdate() {
         if (!isHost || !player) return;
         
-        // Check for ads during time updates too
-        checkAndSkipAds();
+        // Check if ad is playing but don't try to skip it
+        const adPlaying = isAdPlaying();
+        if (adPlaying) {
+            console.log('[SYNC] Ad detected during time update, avoiding sync');
+            return; // Skip syncing during ads
+        }
         
         const currentState = player.getPlayerState();
         const hostTime = player.getCurrentTime();
@@ -1897,12 +1483,21 @@
             
             if (pc.iceConnectionState === 'disconnected') {
                 clearTimeout(disconnectTimer);
+                // Increased timeout and added connection stability checks
                 disconnectTimer = setTimeout(() => {
+                    // Only attempt recovery if we're still disconnected and channel isn't working
                     if (pc.iceConnectionState === 'disconnected') {
-                        console.warn(`[RTC:${peerId}] Still disconnected; attempting ICE restart (guest side only).`);
-                        attemptGuestIceRestart(pc);
+                        const channel = dataChannels[peerId];
+                        const channelWorking = channel && channel.readyState === 'open';
+                        
+                        if (!channelWorking) {
+                            console.warn(`[RTC:${peerId}] Still disconnected after 15s, attempting ICE restart`);
+                            attemptGuestIceRestart(pc);
+                        } else {
+                            console.log(`[RTC:${peerId}] Disconnected but data channel still works, monitoring...`);
+                        }
                     }
-                }, 5000); // Increased from 2000ms to 5000ms
+                }, 15000); // Increased from 5000ms to 15000ms for stability
             } else if (pc.iceConnectionState === 'failed') {
                 console.warn(`[RTC:${peerId}] ICE failed. You likely need a TURN server.`);
             } else if (pc.iceConnectionState === 'connected' || pc.iceConnectionState === 'completed') {
@@ -2058,10 +1653,7 @@ let pendingMessages = [];
 let loadingNewVideo = false;
 let isManualPause = false;
 let guestTimePositions = {}; // Track guest positions for reverse sync
-let adSkipAttempts = 0; // Track ad skip attempts
-let lastAdSkipTime = 0; // Prevent spam clicking
-let totalRecoveryAttempts = 0; // Global counter to prevent infinite recovery loops
-let lastRecoveryTime = 0; // Track when last recovery was attempted
+
 
     function handleUserAction(data) {
         // Clear sync flag for any user-initiated action
@@ -2084,10 +1676,7 @@ let lastRecoveryTime = 0; // Track when last recovery was attempted
                 // Start ad detection timer for both hosts and guests
                 startAdDetectionTimer();
                 
-                // Also start recovery timer for guests
-                if (!isHost) {
-                    startGuestRecoveryTimer();
-                }
+                // Guest waits for host sync instead of starting recovery timer
                 
                 // Process any buffered messages after a short delay to allow video to load
                 setTimeout(() => {
@@ -2183,10 +1772,40 @@ let lastRecoveryTime = 0; // Track when last recovery was attempted
     }
 
     function configureDataChannel(peerId, channel, peerName = '') {
+        // Enhanced data channel monitoring
+        channel._lastStateLog = 0;
+        
+        // Monitor channel state changes
+        const checkChannelState = () => {
+            const now = Date.now();
+            if (now - channel._lastStateLog > 30000) { // Log every 30 seconds
+                console.log(`[DC:${peerId}] readyState=${channel.readyState}, bufferedAmount=${channel.bufferedAmount}`);
+                channel._lastStateLog = now;
+            }
+        };
+        
+        // Set up periodic channel health checks
+        const channelHealthCheck = setInterval(() => {
+            if (channel.readyState === 'closed') {
+                clearInterval(channelHealthCheck);
+                return;
+            }
+            checkChannelState();
+            
+            // Clear excessive buffer if it builds up
+            if (channel.bufferedAmount > 1024 * 16) { // 16KB threshold
+                console.warn(`[DC:${peerId}] High buffer: ${channel.bufferedAmount} bytes`);
+            }
+        }, 30000);
+        
         channel.onopen = () => {
             console.log(`[DC:${peerId}] open`);
             hostMigrationInProgress = false; // Changed from window.migrationInProgress
             updateConnectionStatus();
+            
+            // Initialize keepalive tracking for this peer
+            lastKeepaliveReceived[peerId] = Date.now();
+            
             if (isHost) {
                 const users = { [myAuthId]: { name: myName } };
                 Object.entries(peerConnections).forEach(([id, pc]) => {
@@ -2204,6 +1823,12 @@ let lastRecoveryTime = 0; // Track when last recovery was attempted
         };
         channel.onclose = () => {
             console.log(`[DC:${peerId}] close`);
+            
+            // Clean up keepalive tracking
+            delete lastKeepaliveReceived[peerId];
+            
+            // Clear health check interval
+            clearInterval(channelHealthCheck);
             
             if (peerId === 'host' && !isHost) {
                 console.warn('[DC:host] Host data channel closed');
@@ -2304,10 +1929,14 @@ let lastRecoveryTime = 0; // Track when last recovery was attempted
             }
         } catch (_) {}
 
-        // Enhanced ad detection during buffering for hosts
+        // Check for ads during buffering for hosts (but don't skip them)
         if (state === YT.PlayerState.BUFFERING && isHost && player) {
             console.log('[AD-DETECT] Checking for ads during buffering state');
-            checkAndSkipAds();
+            const adPlaying = isAdPlaying();
+            if (adPlaying) {
+                console.log('[SYNC] Ad detected during buffering, avoiding sync');
+                return; // Skip syncing during ads
+            }
         }
 
         // Ignore pure buffering (but after ad check above)
@@ -2328,12 +1957,7 @@ let lastRecoveryTime = 0; // Track when last recovery was attempted
             isManualPause = false;
             console.log('[YT] Video playing, clearing manual pause flag');
             
-            // Reset recovery counters when video successfully starts playing
-            if (!isHost && (totalRecoveryAttempts > 0 || adSkipAttempts > 0)) {
-                console.log('[GUEST-AD] Video playing successfully, resetting recovery counters');
-                totalRecoveryAttempts = 0;
-                adSkipAttempts = 0;
-            }
+            // Video playing successfully
             
             // Host ad/buffer recovery detection
             if (isHost && player) {
@@ -2355,12 +1979,12 @@ let lastRecoveryTime = 0; // Track when last recovery was attempted
                 }
             }
             
-            // Guest ad detection when starting to play
+            // Guest ad detection when starting to play (but don't try to skip)
             if (!isHost && player && officialVideoDuration > 0) {
-                const currentDuration = player.getDuration();
-                if (currentDuration > 0 && Math.abs(currentDuration - officialVideoDuration) > 10) {
-                    console.log(`[GUEST-AD] Ad detected on playback start: ${currentDuration}s vs expected ${officialVideoDuration}s`);
-                    attemptAdSkip();
+                const adPlaying = isAdPlaying();
+                if (adPlaying) {
+                    console.log(`[GUEST-AD] Ad detected on playback start, guest will wait for sync`);
+                    // Guest just waits for host to sync after ad ends
                 }
             }
         }
@@ -2379,12 +2003,17 @@ let lastRecoveryTime = 0; // Track when last recovery was attempted
                 broadcastData({ type: 'VIDEO_DURATION', duration: duration });
             }
             
-            // Enhanced ad detection and skipping
-            checkAndSkipAds();
+            // Check if ad is playing to avoid syncing during ads
+            if (!isAdPlaying()) {
+                const actionData = { type: 'STATE_CHANGE', state, time: player.getCurrentTime(), userInitiated };
+                handleUserAction(actionData);
+            } else {
+                console.log('[SYNC] Ad detected during PLAYING state, skipping sync');
+            }
+        } else {
+            const actionData = { type: 'STATE_CHANGE', state, time: player.getCurrentTime(), userInitiated };
+            handleUserAction(actionData);
         }
-
-        const actionData = { type: 'STATE_CHANGE', state, time: player.getCurrentTime(), userInitiated };
-        handleUserAction(actionData);
     }
 
     function handleReceivedData(data, senderId) {
@@ -2426,6 +2055,53 @@ let lastRecoveryTime = 0; // Track when last recovery was attempted
         });
         return;
     }        switch (data.type) {
+            case 'KEEPALIVE':
+                // Update keepalive timestamp
+                lastKeepaliveReceived[senderId] = data.timestamp || Date.now();
+                // Respond with our own keepalive if this is from a peer
+                if (senderId !== 'local') {
+                    const response = {
+                        type: 'KEEPALIVE_RESPONSE',
+                        timestamp: Date.now(),
+                        peerId: isHost ? 'host' : currentPartyId || 'guest'
+                    };
+                    const channel = dataChannels[senderId];
+                    if (channel && channel.readyState === 'open') {
+                        try {
+                            channel.send(JSON.stringify(response));
+                        } catch (e) {
+                            console.warn(`[KEEPALIVE] Failed to respond to ${senderId}:`, e.message);
+                        }
+                    }
+                }
+                return; // Don't process further
+            case 'KEEPALIVE_RESPONSE':
+                // Update keepalive timestamp for response
+                lastKeepaliveReceived[senderId] = data.timestamp || Date.now();
+                return; // Don't process further
+            case 'PING':
+                // Respond to ping with pong
+                if (senderId !== 'local') {
+                    const pong = { type: 'PONG', timestamp: Date.now(), originalTimestamp: data.timestamp };
+                    const channel = dataChannels[senderId];
+                    if (channel && channel.readyState === 'open') {
+                        try {
+                            channel.send(JSON.stringify(pong));
+                            console.log(`[PING] Ponged ${senderId}`);
+                        } catch (e) {
+                            console.warn(`[PING] Failed to pong ${senderId}:`, e.message);
+                        }
+                    }
+                }
+                return; // Don't process further
+            case 'PONG':
+                // Calculate round-trip time
+                if (data.originalTimestamp) {
+                    const rtt = Date.now() - data.originalTimestamp;
+                    console.log(`[PONG] RTT to ${senderId}: ${rtt}ms`);
+                }
+                lastKeepaliveReceived[senderId] = Date.now();
+                return; // Don't process further
             case 'HOST_INFO':
                 currentHostId = data.hostId;
                 break;
@@ -2510,12 +2186,8 @@ let lastRecoveryTime = 0; // Track when last recovery was attempted
                 }
                 player.loadVideoById(data.videoId);
                 
-                // Start appropriate timer based on host/guest
-                if (isHost) {
-                    startAdDetectionTimer();
-                } else {
-                    startGuestRecoveryTimer();
-                }
+                // Start ad detection timer for both hosts and guests
+                startAdDetectionTimer();
                 break;
             case 'STATE_CHANGE': {
                 // Additional safety check
@@ -2541,12 +2213,11 @@ let lastRecoveryTime = 0; // Track when last recovery was attempted
                 // Check current player state to avoid conflicts
                 const currentState = player.getPlayerState();
                 
-                // Don't sync state changes when player is in UNSTARTED, but try to recover
+                // Don't sync state changes when player is in UNSTARTED
                 if (currentState === YT.PlayerState.UNSTARTED) {
-                    // For guests, this might be an ad issue
+                    // For guests, just log that we're waiting for host sync
                     if (!isHost) {
-                        console.log('[GUEST-AD] STATE_CHANGE received but player UNSTARTED - checking for ads');
-                        checkGuestAdRecovery();
+                        console.log('[GUEST] STATE_CHANGE received but player UNSTARTED - waiting for host sync');
                     }
                     
                     if (data.videoId && currentVideoId && data.videoId === currentVideoId) {
@@ -2629,10 +2300,9 @@ let lastRecoveryTime = 0; // Track when last recovery was attempted
                         
                         // Only sync if we're not in UNSTARTED state, unless we're actively loading
                         if (localState === YT.PlayerState.UNSTARTED) {
-                            // For guests, check if this might be an ad issue
+                            // For guests, just wait for natural sync resolution
                             if (!isHost) {
-                                console.log('[GUEST-AD] UNSTARTED state during sync - checking for ad issues');
-                                checkGuestAdRecovery();
+                                console.log('[GUEST] UNSTARTED state during sync - waiting for natural resolution');
                             }
                             
                             // If we're loading a new video, try to load it first
@@ -2662,13 +2332,13 @@ let lastRecoveryTime = 0; // Track when last recovery was attempted
                         player.pauseVideo();
                     }
                     
-                    // Guest ad detection after time sync
+                    // Guest ad detection after time sync (but don't try to skip)
                     if (data.duration && data.duration > 0) {
                         // Check if guest has different duration than expected
-                        const localDuration = player.getDuration();
-                        if (localDuration > 0 && Math.abs(localDuration - data.duration) > 10) {
-                            console.log(`[GUEST-AD] Duration mismatch detected: local ${localDuration}s vs host ${data.duration}s`);
-                            attemptAdSkip();
+                        const adPlaying = isAdPlaying();
+                        if (adPlaying) {
+                            console.log(`[GUEST-AD] Ad detected after time sync, guest will wait`);
+                            // Guest just waits for host to get through the ad
                         }
                     }
                 }
@@ -2891,6 +2561,83 @@ let lastRecoveryTime = 0; // Track when last recovery was attempted
                 });
             }
         }, 1500);
+        
+        // Start connection monitoring and keepalive
+        startConnectionKeepalive();
+        startConnectionMonitor();
+    }
+
+    function startConnectionKeepalive() {
+        if (connectionKeepaliveInterval) clearInterval(connectionKeepaliveInterval);
+        
+        connectionKeepaliveInterval = setInterval(() => {
+            const keepaliveData = { 
+                type: 'KEEPALIVE', 
+                timestamp: Date.now(),
+                peerId: isHost ? 'host' : currentPartyId || 'guest'
+            };
+            
+            // Send keepalive to all connected peers
+            Object.entries(dataChannels).forEach(([id, channel]) => {
+                if (channel && channel.readyState === 'open') {
+                    try {
+                        channel.send(JSON.stringify(keepaliveData));
+                        console.log(`[KEEPALIVE] Sent to ${id}`);
+                    } catch (e) {
+                        console.warn(`[KEEPALIVE] Failed to send to ${id}:`, e.message);
+                    }
+                }
+            });
+        }, CONNECTION_KEEPALIVE_INTERVAL);
+    }
+
+    function startConnectionMonitor() {
+        if (connectionMonitorInterval) clearInterval(connectionMonitorInterval);
+        
+        connectionMonitorInterval = setInterval(() => {
+            const now = Date.now();
+            
+            // Check each peer connection's health
+            Object.entries(peerConnections).forEach(([peerId, pc]) => {
+                if (!pc) return;
+                
+                const channel = dataChannels[peerId];
+                const iceState = pc.iceConnectionState;
+                const connState = pc.connectionState;
+                
+                // Log connection issues (throttled)
+                if ((iceState === 'disconnected' || iceState === 'failed' || connState === 'disconnected' || connState === 'failed') &&
+                    (!pc._lastIssueLog || (now - pc._lastIssueLog) > 30000)) {
+                    console.warn(`[CONN-MONITOR] ${peerId}: ICE=${iceState}, Conn=${connState}, Channel=${channel?.readyState || 'none'}`);
+                    pc._lastIssueLog = now;
+                }
+                
+                // Check for stale keepalives (only for active connections)
+                if (iceState === 'connected' || iceState === 'completed') {
+                    const lastKeepalive = lastKeepaliveReceived[peerId];
+                    if (lastKeepalive && (now - lastKeepalive) > CONNECTION_KEEPALIVE_INTERVAL * 3) {
+                        console.warn(`[CONN-MONITOR] ${peerId}: No keepalive for ${Math.floor((now - lastKeepalive) / 1000)}s`);
+                        
+                        // Try to send a ping to wake up the connection
+                        if (channel && channel.readyState === 'open') {
+                            try {
+                                channel.send(JSON.stringify({ type: 'PING', timestamp: now }));
+                            } catch (e) {
+                                console.warn(`[CONN-MONITOR] Failed to ping ${peerId}:`, e.message);
+                            }
+                        }
+                    }
+                }
+            });
+            
+            // Clean up old keepalive records
+            Object.keys(lastKeepaliveReceived).forEach(peerId => {
+                if (!peerConnections[peerId] || (now - lastKeepaliveReceived[peerId]) > 300000) {
+                    delete lastKeepaliveReceived[peerId];
+                }
+            });
+            
+        }, CONNECTION_MONITOR_INTERVAL);
     }
 
     async function handleHostDisconnection() {
@@ -2971,6 +2718,17 @@ let lastRecoveryTime = 0; // Track when last recovery was attempted
             clearInterval(hostHeartbeatInterval);
             hostHeartbeatInterval = null;
         }
+        if (connectionKeepaliveInterval) {
+            clearInterval(connectionKeepaliveInterval);
+            connectionKeepaliveInterval = null;
+        }
+        if (connectionMonitorInterval) {
+            clearInterval(connectionMonitorInterval);
+            connectionMonitorInterval = null;
+        }
+        
+        // Clear keepalive tracking
+        lastKeepaliveReceived = {};
         
         // Reset connection state
         isHost = false;
