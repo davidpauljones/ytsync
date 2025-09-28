@@ -455,8 +455,8 @@
     let hostHeartbeatInterval;
     let connectionKeepaliveInterval;
     let connectionMonitorInterval;
-    const CONNECTION_KEEPALIVE_INTERVAL = 30000; // 30 seconds
-    const CONNECTION_MONITOR_INTERVAL = 5000; // 5 seconds
+    const CONNECTION_KEEPALIVE_INTERVAL = 45000; // 45 seconds
+    const CONNECTION_MONITOR_INTERVAL = 10000; // 10 seconds
     let lastKeepaliveReceived = {}; // Track last keepalive from each peer
     let intentToAutoPlay = false;
     let localUserList = {};
@@ -2492,7 +2492,7 @@ let guestTimePositions = {}; // Track guest positions for reverse sync
                     });
                 }
             }
-        }, 1500);
+        }, 3000); // Reduced frequency from 1.5s to 3s for better stability
         
         // Start connection monitoring and keepalive
         startConnectionKeepalive();
@@ -2512,6 +2512,12 @@ let guestTimePositions = {}; // Track guest positions for reverse sync
             // Send keepalive to all connected peers
             Object.entries(dataChannels).forEach(([id, channel]) => {
                 if (channel && channel.readyState === 'open') {
+                    // Check buffer size to avoid overwhelming the connection
+                    if (channel.bufferedAmount > 8192) { // 8KB threshold
+                        console.warn(`[KEEPALIVE] Skipping ${id} due to high buffer: ${channel.bufferedAmount} bytes`);
+                        return;
+                    }
+                    
                     try {
                         channel.send(JSON.stringify(keepaliveData));
                         console.log(`[KEEPALIVE] Sent to ${id}`);
@@ -2547,13 +2553,18 @@ let guestTimePositions = {}; // Track guest positions for reverse sync
                 // Check for stale keepalives (only for active connections)
                 if (iceState === 'connected' || iceState === 'completed') {
                     const lastKeepalive = lastKeepaliveReceived[peerId];
-                    if (lastKeepalive && (now - lastKeepalive) > CONNECTION_KEEPALIVE_INTERVAL * 3) {
+                    if (lastKeepalive && (now - lastKeepalive) > CONNECTION_KEEPALIVE_INTERVAL * 4) {
                         console.warn(`[CONN-MONITOR] ${peerId}: No keepalive for ${Math.floor((now - lastKeepalive) / 1000)}s`);
                         
-                        // Try to send a ping to wake up the connection
-                        if (channel && channel.readyState === 'open') {
+                        // Only try to ping if we haven't pinged recently and buffer is not full
+                        if (channel && channel.readyState === 'open' && 
+                            channel.bufferedAmount < 4096 && 
+                            (!channel._lastPingTime || (now - channel._lastPingTime) > 30000)) {
+                            
                             try {
                                 channel.send(JSON.stringify({ type: 'PING', timestamp: now }));
+                                channel._lastPingTime = now;
+                                console.log(`[CONN-MONITOR] Sent recovery ping to ${peerId}`);
                             } catch (e) {
                                 console.warn(`[CONN-MONITOR] Failed to ping ${peerId}:`, e.message);
                             }
