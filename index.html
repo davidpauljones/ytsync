@@ -1257,6 +1257,7 @@
         guestDocRef.onSnapshot(async (snapshot) => {
             const data = snapshot.data();
             if (!data) return;
+            
             // Apply the host's answer only once and only in have-local-offer state
             if (data.answer && !pc._answerApplied && pc.signalingState === 'have-local-offer') {
                 try {
@@ -1270,6 +1271,9 @@
                 }
             }
         });
+        
+        // Start monitoring host activity as a backup to WebRTC state detection
+        startHostActivityMonitoring();
 
         pc._guestHostCandidatesRef.onSnapshot(snapshot => {
             snapshot.docChanges().forEach(change => {
@@ -1416,7 +1420,7 @@
                 const state = pc.connectionState;
                 
                 if (state === 'failed' || state === 'disconnected' || state === 'closed') {
-                    console.warn(`[RTC:host] Connection lost (${state}), starting migration`);
+                    console.warn(`[RTC:host] Host connection lost (${state}), scheduling migration check`);
                     
                     // Reset migration flag if it was stuck
                     if (hostMigrationInProgress) {
@@ -1424,10 +1428,19 @@
                         hostMigrationInProgress = false;
                     }
                     
-                    // Start migration after a short delay to avoid race conditions
+                    // Start migration after checking connection state again
                     setTimeout(() => {
-                        if (!hostMigrationInProgress && pc.connectionState !== 'connected') {
+                        const currentState = pc.connectionState;
+                        const iceState = pc.iceConnectionState;
+                        console.log(`[MIGRATION] Host connection check - Conn: ${currentState}, ICE: ${iceState}`);
+                        
+                        if (!hostMigrationInProgress && 
+                            (currentState === 'failed' || currentState === 'disconnected' || currentState === 'closed' ||
+                             iceState === 'failed' || iceState === 'disconnected')) {
+                            console.log('[MIGRATION] Host connection confirmed lost, starting migration');
                             handleHostDisconnection();
+                        } else {
+                            console.log('[MIGRATION] Host connection recovered, skipping migration');
                         }
                     }, 1000);
                 }
@@ -2467,6 +2480,17 @@ let guestTimePositions = {}; // Track guest positions for reverse sync
                         channel.send(JSON.stringify(data));
                     }
                 });
+                
+                // Update host activity timestamp in Firestore for backup detection
+                // Do this less frequently to avoid excessive writes
+                if (!this._lastFirestoreUpdate || (Date.now() - this._lastFirestoreUpdate) > 30000) {
+                    this._lastFirestoreUpdate = Date.now();
+                    partyDocRef.update({
+                        lastHeartbeat: firebase.firestore.FieldValue.serverTimestamp()
+                    }).catch(err => {
+                        console.warn('[HEARTBEAT] Failed to update Firestore timestamp:', err.message);
+                    });
+                }
             }
         }, 1500);
         
@@ -2546,6 +2570,54 @@ let guestTimePositions = {}; // Track guest positions for reverse sync
             });
             
         }, CONNECTION_MONITOR_INTERVAL);
+    }
+    
+    // Backup host disconnection detection via Firestore monitoring
+    function startHostActivityMonitoring() {
+        if (isHost) return; // Only guests monitor host activity
+        
+        let hostActivityInterval;
+        let lastHostActivity = Date.now();
+        
+        // Monitor party document for host activity timestamps
+        const hostActivityListener = partyDocRef.onSnapshot((doc) => {
+            if (doc.exists) {
+                const data = doc.data();
+                const lastHeartbeat = data.lastHeartbeat;
+                
+                if (lastHeartbeat) {
+                    lastHostActivity = lastHeartbeat.toMillis ? lastHeartbeat.toMillis() : lastHeartbeat;
+                }
+            }
+        });
+        
+        // Check host activity every 10 seconds
+        hostActivityInterval = setInterval(() => {
+            if (isHost || hostMigrationInProgress) return; // Skip if we became host or migration in progress
+            
+            const now = Date.now();
+            const timeSinceLastActivity = now - lastHostActivity;
+            
+            // If no host activity for 45 seconds, trigger migration
+            if (timeSinceLastActivity > 45000) {
+                console.warn(`[HOST-MONITOR] No host activity for ${Math.floor(timeSinceLastActivity / 1000)}s, triggering migration`);
+                
+                // Clean up monitoring
+                clearInterval(hostActivityInterval);
+                hostActivityListener();
+                
+                // Start migration if not already in progress
+                if (!hostMigrationInProgress) {
+                    handleHostDisconnection();
+                }
+            }
+        }, 10000);
+        
+        // Store cleanup function for later use
+        pc._hostActivityCleanup = () => {
+            if (hostActivityInterval) clearInterval(hostActivityInterval);
+            hostActivityListener();
+        };
     }
 
     async function handleHostDisconnection() {
@@ -2646,17 +2718,28 @@ let guestTimePositions = {}; // Track guest positions for reverse sync
         localUserList = { [myAuthId]: { name: myName } };
         updateUserList(localUserList);
         
-        console.log('[MIGRATION] Cleanup complete');
+        console.log('[MIGRATION] Cleanup complete - preserved our own user info');
     }
 
     // Step 2: Determine who should become the new host
     async function determineNewHost() {
         try {
-            // Get all connected users (including ourselves)
-            const allUsers = { ...localUserList };
-            if (!allUsers[myAuthId]) {
-                allUsers[myAuthId] = { name: myName };
-            }
+            console.log('[MIGRATION] Determining new host from Firestore guest list...');
+            
+            // Get all connected guests from Firestore (more reliable than local list)
+            const guestsSnapshot = await partyDocRef.collection('guests').get();
+            const allUsers = {};
+            
+            // Include ourselves
+            allUsers[myAuthId] = { name: myName };
+            
+            // Add all guests from Firestore
+            guestsSnapshot.forEach(doc => {
+                if (doc.exists) {
+                    const data = doc.data();
+                    allUsers[doc.id] = { name: data.name || 'Unknown' };
+                }
+            });
             
             // Sort user IDs deterministically (alphabetical order)
             const sortedUserIds = Object.keys(allUsers).sort();
@@ -2672,8 +2755,16 @@ let guestTimePositions = {}; // Track guest positions for reverse sync
             
         } catch (error) {
             console.error('[MIGRATION] Error determining new host:', error);
-            // Fallback: always try to become host if we can't determine
-            return true;
+            // Fallback: use timestamp-based election to avoid conflicts
+            const electionTimestamp = Date.now();
+            console.log('[MIGRATION] Using timestamp-based fallback:', electionTimestamp);
+            
+            // Wait a random delay based on our user ID to avoid simultaneous attempts
+            const delay = Math.abs(myAuthId.split('').reduce((a, b) => a + b.charCodeAt(0), 0)) % 5000;
+            console.log('[MIGRATION] Waiting', delay, 'ms before attempting to claim host role');
+            await new Promise(resolve => setTimeout(resolve, delay));
+            
+            return true; // Try to become host after delay
         }
     }
 
@@ -2683,7 +2774,7 @@ let guestTimePositions = {}; // Track guest positions for reverse sync
             console.log('[MIGRATION] Attempting to claim host role...');
             
             // Use a transaction to safely claim host role
-            await db.runTransaction(async (transaction) => {
+            const success = await db.runTransaction(async (transaction) => {
                 const partyDoc = await transaction.get(partyDocRef);
                 
                 if (!partyDoc.exists) {
@@ -2692,11 +2783,19 @@ let guestTimePositions = {}; // Track guest positions for reverse sync
                 
                 const currentData = partyDoc.data();
                 const currentHostId = currentData.hostId;
+                const currentMigratedAt = currentData.migratedAt;
                 
-                // Only proceed if current host is different (avoid race conditions)
+                // If there's already a new host (someone else claimed it), abort
+                if (currentHostId !== myAuthId && currentMigratedAt && 
+                    (Date.now() - currentMigratedAt.toMillis()) < 30000) { // Within last 30 seconds
+                    console.log('[MIGRATION] Another user already claimed host role:', currentHostId);
+                    return false; // Signal that someone else became host
+                }
+                
+                // Only proceed if current host is different or very old migration
                 if (currentHostId === myAuthId) {
                     console.log('[MIGRATION] Already the host, skipping');
-                    return;
+                    return true; // We're already host
                 }
                 
                 // Claim host role
@@ -2707,7 +2806,15 @@ let guestTimePositions = {}; // Track guest positions for reverse sync
                 });
                 
                 console.log('[MIGRATION] Host role claimed in Firestore');
+                return true; // Successfully claimed host role
             });
+            
+            if (!success) {
+                // Someone else became host, we should wait for them
+                console.log('[MIGRATION] Host role already claimed by another user, switching to wait mode');
+                await waitForNewHost();
+                return;
+            }
             
             // Clean up old guest documents
             await cleanupOldGuestDocuments();
