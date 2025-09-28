@@ -1806,12 +1806,24 @@ let guestTimePositions = {}; // Track guest positions for reverse sync
             currentVideoId,
         });
 
-        // Show "Up Next" immediately when video ends and queue is empty (before any early returns)
-        if (state === YT.PlayerState.ENDED && videoQueue.length === 0) {
-            if (!upNextActive) {
-                console.log('[UpNext] ENDED with empty queue — showing overlay');
-                showUpNextOverlay();
-                setTimeout(() => populateUpNextSuggestions(), 0);
+        // Handle video ending: either show "Up Next" or play next video in queue
+        if (state === YT.PlayerState.ENDED) {
+            if (videoQueue.length === 0) {
+                // Show "Up Next" overlay when queue is empty
+                if (!upNextActive) {
+                    console.log('[UpNext] ENDED with empty queue — showing overlay');
+                    showUpNextOverlay();
+                    setTimeout(() => populateUpNextSuggestions(), 0);
+                }
+            } else if (isHost) {
+                // Play next video in queue immediately (hosts only)
+                console.log('[QUEUE] Video ended, playing next video from queue');
+                const nextVideo = videoQueue.shift();
+                hideUpNextOverlay();
+                handleUserAction({ type: 'NEW_VIDEO', videoId: nextVideo.videoId, autoPlay: true });
+                const queueUpdateData = { type: 'QUEUE_UPDATE', queue: videoQueue };
+                broadcastData(queueUpdateData);
+                return; // Exit early to avoid normal state processing
             }
         }
 
@@ -2418,14 +2430,6 @@ let guestTimePositions = {}; // Track guest positions for reverse sync
             if (isHost && player && typeof player.getCurrentTime === 'function') {
                 const currentState = player.getPlayerState();
                 const hostTime = player.getCurrentTime();
-                
-                if (currentState === YT.PlayerState.ENDED && videoQueue.length > 0) {
-                    const nextVideo = videoQueue.shift();
-                    hideUpNextOverlay();
-                    broadcastData({ type: 'NEW_VIDEO', videoId: nextVideo.videoId, autoPlay: true });
-                    broadcastData({ type: 'QUEUE_UPDATE', queue: videoQueue });
-                    return;
-                }
                 
                 // Check for reverse sync scenario (host behind guests due to ad/buffer)
                 if (currentState === YT.PlayerState.PLAYING && Object.keys(guestTimePositions).length > 0) {
