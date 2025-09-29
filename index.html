@@ -720,11 +720,12 @@
         let hiddenTimeout;
         document.addEventListener('visibilitychange', () => {
             if (document.hidden) {
-                // Set a timeout to send leaving message if hidden for too long
+                // Only disconnect guests after long periods of inactivity, hosts should stay connected
+                const timeoutDuration = isHost ? 300000 : 120000; // 5 minutes for hosts, 2 minutes for guests
                 hiddenTimeout = setTimeout(() => {
-                    console.log('[CLEANUP] Tab hidden for 30 seconds, sending leaving message');
+                    console.log(`[CLEANUP] Tab hidden for ${Math.floor(timeoutDuration/60000)} minutes, sending leaving message`);
                     sendLeavingMessage();
-                }, 30000); // 30 seconds
+                }, timeoutDuration);
             } else {
                 // Tab became visible again, cancel the timeout
                 if (hiddenTimeout) {
@@ -1995,6 +1996,7 @@ let guestTimePositions = {}; // Track guest positions for reverse sync
             case 'KEEPALIVE':
                 // Update keepalive timestamp
                 lastKeepaliveReceived[senderId] = data.timestamp || Date.now();
+                console.log(`[KEEPALIVE] Received from ${senderId}`);
                 // Respond with our own keepalive if this is from a peer
                 if (senderId !== 'local') {
                     const response = {
@@ -2006,6 +2008,7 @@ let guestTimePositions = {}; // Track guest positions for reverse sync
                     if (channel && channel.readyState === 'open') {
                         try {
                             channel.send(JSON.stringify(response));
+                            console.log(`[KEEPALIVE] Responded to ${senderId}`);
                         } catch (e) {
                             console.warn(`[KEEPALIVE] Failed to respond to ${senderId}:`, e.message);
                         }
@@ -2015,6 +2018,7 @@ let guestTimePositions = {}; // Track guest positions for reverse sync
             case 'KEEPALIVE_RESPONSE':
                 // Update keepalive timestamp for response
                 lastKeepaliveReceived[senderId] = data.timestamp || Date.now();
+                console.log(`[KEEPALIVE] Response received from ${senderId}`);
                 return; // Don't process further
             case 'PING':
                 // Respond to ping with pong
@@ -2487,7 +2491,8 @@ let guestTimePositions = {}; // Track guest positions for reverse sync
                     partyDocRef.update({
                         lastHeartbeat: firebase.firestore.FieldValue.serverTimestamp()
                     }).catch(err => {
-                        console.warn('[HEARTBEAT] Failed to update Firestore timestamp:', err.message);
+                        // If permissions fail, fall back to WebRTC-only detection
+                        console.warn('[HEARTBEAT] Failed to update Firestore timestamp (using WebRTC-only detection):', err.message);
                     });
                 }
             }
@@ -2519,7 +2524,7 @@ let guestTimePositions = {}; // Track guest positions for reverse sync
                     
                     try {
                         channel.send(JSON.stringify(keepaliveData));
-                        console.log(`[KEEPALIVE] Sent to ${id}`);
+                        console.log(`[KEEPALIVE] Sent to ${id} (buffer: ${channel.bufferedAmount})`);
                     } catch (e) {
                         console.warn(`[KEEPALIVE] Failed to send to ${id}:`, e.message);
                     }
@@ -2552,13 +2557,13 @@ let guestTimePositions = {}; // Track guest positions for reverse sync
                 // Check for stale keepalives (only for active connections)
                 if (iceState === 'connected' || iceState === 'completed') {
                     const lastKeepalive = lastKeepaliveReceived[peerId];
-                    if (lastKeepalive && (now - lastKeepalive) > CONNECTION_KEEPALIVE_INTERVAL * 4) {
+                    if (lastKeepalive && (now - lastKeepalive) > CONNECTION_KEEPALIVE_INTERVAL * 5) { // More forgiving: 5x instead of 4x
                         console.warn(`[CONN-MONITOR] ${peerId}: No keepalive for ${Math.floor((now - lastKeepalive) / 1000)}s`);
                         
                         // Only try to ping if we haven't pinged recently and buffer is not full
                         if (channel && channel.readyState === 'open' && 
                             channel.bufferedAmount < 4096 && 
-                            (!channel._lastPingTime || (now - channel._lastPingTime) > 30000)) {
+                            (!channel._lastPingTime || (now - channel._lastPingTime) > 60000)) { // Reduced ping frequency: 60s instead of 30s
                             
                             try {
                                 channel.send(JSON.stringify({ type: 'PING', timestamp: now }));
