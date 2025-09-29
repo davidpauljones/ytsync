@@ -3248,9 +3248,7 @@ let guestTimePositions = {}; // Track guest positions for reverse sync
         }
         
         console.log('[SKIP] Manually skipping to next video in queue');
-        const nextVideo = videoQueue.shift();
-        updateQueueUI();
-        handleUserAction({ type: 'NEW_VIDEO', videoId: nextVideo.videoId, autoPlay: true });
+        handleUserAction({ type: 'PLAY_FROM_QUEUE', index: 0 });
     }
     
     // Update skip button state based on queue
