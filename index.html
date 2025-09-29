@@ -251,6 +251,11 @@
         #theaterModeBtn { background: none; border: 1px solid var(--border-color); color: var(--primary-text); padding: 8px; border-radius: 50%; cursor: pointer; display: flex; align-items: center; justify-content: center; z-index: 50; flex-shrink: 0; }
         #theaterModeBtn:hover { background-color: var(--hover-background); }
         #theaterModeBtn svg { stroke: var(--primary-text); }
+        #skipVideoBtn { background: none; border: 1px solid var(--border-color); color: var(--primary-text); padding: 8px; border-radius: 50%; cursor: pointer; display: flex; align-items: center; justify-content: center; z-index: 50; flex-shrink: 0; margin-right: 8px; }
+        #skipVideoBtn:hover { background-color: var(--hover-background); }
+        #skipVideoBtn svg { stroke: var(--primary-text); }
+        #skipVideoBtn:disabled { opacity: 0.5; cursor: not-allowed; }
+        #skipVideoBtn:disabled:hover { background-color: transparent; }
         body.theater-mode .page-container { 
             display: block !important; 
             grid-template-columns: none !important;
@@ -502,10 +507,15 @@
             </div>
             <div class="player-controls">
                 <div id="videoTitle" class="video-title-toolbar">No video loaded</div>
-                <button id="theaterModeBtn" title="Theater Mode">
-                    <svg class="expand-icon" xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 3H5a2 2 0 0 0-2 2v3m18 0V5a2 2 0 0 0-2-2h-3m0 18h3a2 2 0 0 0 2-2v-3M3 16v3a2 2 0 0 0 2 2h3"/></svg>
-                    <svg class="close-icon" xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
-                </button>
+                <div style="display: flex; gap: 8px;">
+                    <button id="skipVideoBtn" title="Skip to Next Video" disabled>
+                        <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="5,4 15,12 5,20"></polygon><line x1="19" y1="5" x2="19" y2="19"></line></svg>
+                    </button>
+                    <button id="theaterModeBtn" title="Theater Mode">
+                        <svg class="expand-icon" xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 3H5a2 2 0 0 0-2 2v3m18 0V5a2 2 0 0 0-2-2h-3m0 18h3a2 2 0 0 0 2-2v-3M3 16v3a2 2 0 0 0 2 2h3"/></svg>
+                        <svg class="close-icon" xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
+                    </button>
+                </div>
             </div>
         </div>
 
@@ -604,6 +614,7 @@
     const searchInput = document.getElementById('searchInput');
     const resultsList = document.getElementById('results');
     const queueList = document.getElementById('queueList');
+    const skipVideoBtn = document.getElementById('skipVideoBtn');
     const connectionStatus = document.getElementById('connectionStatus');
     const createInviteBtn = document.getElementById('createInviteBtn');
     const inviteLinkInput = document.getElementById('inviteLink');
@@ -1280,8 +1291,27 @@
         }
     }
     
+    // Skip to next video function
+    function skipToNextVideo() {
+        if (videoQueue.length === 0) {
+            console.log('[SKIP] No videos in queue to skip to');
+            return;
+        }
+        
+        console.log('[SKIP] Manually skipping to next video in queue');
+        const nextVideo = videoQueue.shift();
+        updateQueueDisplay();
+        handleUserAction({ type: 'NEW_VIDEO', videoId: nextVideo.videoId, autoPlay: true });
+    }
+    
+    // Update skip button state based on queue
+    function updateSkipButtonState() {
+        skipVideoBtn.disabled = videoQueue.length === 0;
+    }
+
     searchButton.addEventListener('click', searchYouTube);
     searchInput.addEventListener('keypress', e => e.key === 'Enter' && searchYouTube());
+    skipVideoBtn.addEventListener('click', skipToNextVideo);
 
     async function searchYouTube() {
 		const query = searchInput.value;
@@ -3210,6 +3240,24 @@ let guestTimePositions = {}; // Track guest positions for reverse sync
         }
     }
 
+    // Skip to next video function
+    function skipToNextVideo() {
+        if (videoQueue.length === 0) {
+            console.log('[SKIP] No videos in queue to skip to');
+            return;
+        }
+        
+        console.log('[SKIP] Manually skipping to next video in queue');
+        const nextVideo = videoQueue.shift();
+        updateQueueUI();
+        handleUserAction({ type: 'NEW_VIDEO', videoId: nextVideo.videoId, autoPlay: true });
+    }
+    
+    // Update skip button state based on queue
+    function updateSkipButtonState() {
+        skipVideoBtn.disabled = videoQueue.length === 0;
+    }
+
     function updateQueueUI() {
         queueList.innerHTML = '';
         if (videoQueue.length === 0) {
@@ -3230,6 +3278,9 @@ let guestTimePositions = {}; // Track guest positions for reverse sync
             });
             queueList.appendChild(li);
         });
+        
+        // Update skip button state
+        updateSkipButtonState();
     }
 
     function updateConnectionStatus() {

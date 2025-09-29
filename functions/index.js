@@ -31,7 +31,7 @@ exports.searchYoutube = onCall(async (request) => {
               q: searchQuery,
               key: apiKey,
               type: "video",
-              maxResults: 10,
+              maxResults: 20,
             },
           });
     } else {
