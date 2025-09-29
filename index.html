@@ -716,22 +716,13 @@
         // Method 2: pagehide event (more reliable on mobile)
         window.addEventListener('pagehide', sendLeavingMessage);
         
-        // Method 3: visibilitychange when document becomes hidden for extended period
+        // Method 3: visibilitychange - only used for UI feedback, not disconnection
         let hiddenTimeout;
         document.addEventListener('visibilitychange', () => {
             if (document.hidden) {
-                // Only disconnect guests after long periods of inactivity, hosts should stay connected
-                const timeoutDuration = isHost ? 300000 : 120000; // 5 minutes for hosts, 2 minutes for guests
-                hiddenTimeout = setTimeout(() => {
-                    console.log(`[CLEANUP] Tab hidden for ${Math.floor(timeoutDuration/60000)} minutes, sending leaving message`);
-                    sendLeavingMessage();
-                }, timeoutDuration);
+                console.log('[UI] Tab hidden - continuing to sync in background');
             } else {
-                // Tab became visible again, cancel the timeout
-                if (hiddenTimeout) {
-                    clearTimeout(hiddenTimeout);
-                    hiddenTimeout = null;
-                }
+                console.log('[UI] Tab visible again');
             }
         });
 
@@ -1416,12 +1407,14 @@
             }
             updateConnectionStatus();
             
-            // Handle host disconnection more aggressively
+            // Handle host disconnection only when connection is truly dead
             if (peerId === 'host' && !isHost) {
                 const state = pc.connectionState;
                 
-                if (state === 'failed' || state === 'disconnected' || state === 'closed') {
-                    console.warn(`[RTC:host] Host connection lost (${state}), scheduling migration check`);
+                // Only trigger migration for 'failed' or 'closed' states, not 'disconnected'
+                // 'disconnected' can be temporary, but 'failed' means the connection is truly dead
+                if (state === 'failed' || state === 'closed') {
+                    console.warn(`[RTC:host] Host connection definitively lost (${state}), scheduling migration check`);
                     
                     // Reset migration flag if it was stuck
                     if (hostMigrationInProgress) {
@@ -1429,21 +1422,43 @@
                         hostMigrationInProgress = false;
                     }
                     
-                    // Start migration after checking connection state again
+                    // Start migration after checking connection state again and testing ping
                     setTimeout(() => {
                         const currentState = pc.connectionState;
                         const iceState = pc.iceConnectionState;
-                        console.log(`[MIGRATION] Host connection check - Conn: ${currentState}, ICE: ${iceState}`);
+                        console.log(`[MIGRATION] Host connection final check - Conn: ${currentState}, ICE: ${iceState}`);
                         
+                        // Only migrate if connection is still definitively failed AND we can't ping
                         if (!hostMigrationInProgress && 
-                            (currentState === 'failed' || currentState === 'disconnected' || currentState === 'closed' ||
-                             iceState === 'failed' || iceState === 'disconnected')) {
-                            console.log('[MIGRATION] Host connection confirmed lost, starting migration');
-                            handleHostDisconnection();
+                            (currentState === 'failed' || currentState === 'closed')) {
+                            
+                            // Try one final ping test before giving up
+                            const hostChannel = dataChannels['host'];
+                            if (hostChannel && hostChannel.readyState === 'open') {
+                                console.log('[MIGRATION] Attempting final ping test before migration');
+                                try {
+                                    hostChannel.send(JSON.stringify({ type: 'PING', timestamp: Date.now() }));
+                                    // Give it 3 seconds to respond before migrating
+                                    setTimeout(() => {
+                                        if (!hostMigrationInProgress && (pc.connectionState === 'failed' || pc.connectionState === 'closed')) {
+                                            console.log('[MIGRATION] Final ping test failed, starting migration');
+                                            handleHostDisconnection();
+                                        } else {
+                                            console.log('[MIGRATION] Host responded to final ping, connection recovered');
+                                        }
+                                    }, 3000);
+                                } catch (e) {
+                                    console.log('[MIGRATION] Final ping failed, connection definitely dead');
+                                    handleHostDisconnection();
+                                }
+                            } else {
+                                console.log('[MIGRATION] Data channel closed, starting migration');
+                                handleHostDisconnection();
+                            }
                         } else {
-                            console.log('[MIGRATION] Host connection recovered, skipping migration');
+                            console.log('[MIGRATION] Host connection recovered or migration already in progress');
                         }
-                    }, 1000);
+                    }, 2000); // Increased delay to allow for recovery
                 }
             }
         };
@@ -1768,11 +1783,22 @@ let guestTimePositions = {}; // Track guest positions for reverse sync
             if (peerId === 'host' && !isHost) {
                 console.warn('[DC:host] Host data channel closed');
                 
-                // Only trigger migration if not already in progress and we haven't become host
-                if (!hostMigrationInProgress && !isHost) {
-                    console.log('[DC:host] Triggering host migration from data channel close');
-                    setTimeout(() => handleHostDisconnection(), 500);
-                }
+                // Don't immediately trigger migration - wait to see if it's temporary
+                setTimeout(() => {
+                    const pc = peerConnections['host'];
+                    const connState = pc ? pc.connectionState : 'closed';
+                    
+                    console.log(`[DC:host] Delayed check - connection state: ${connState}`);
+                    
+                    // Only trigger migration if connection is truly failed and migration not already in progress
+                    if (!hostMigrationInProgress && !isHost && 
+                        (connState === 'failed' || connState === 'closed')) {
+                        console.log('[DC:host] Host connection confirmed dead after delay, starting migration');
+                        handleHostDisconnection();
+                    } else {
+                        console.log('[DC:host] Host connection recovered or migration already in progress');
+                    }
+                }, 5000); // Wait 5 seconds to see if connection recovers
                 return;
             }
             
@@ -2042,6 +2068,12 @@ let guestTimePositions = {}; // Track guest positions for reverse sync
                     console.log(`[PONG] RTT to ${senderId}: ${rtt}ms`);
                 }
                 lastKeepaliveReceived[senderId] = Date.now();
+                
+                // Track ping responses separately for connection monitoring
+                const channel = dataChannels[senderId];
+                if (channel) {
+                    channel._lastPingResponse = Date.now();
+                }
                 return; // Don't process further
             case 'HOST_INFO':
                 currentHostId = data.hostId;
@@ -2557,18 +2589,23 @@ let guestTimePositions = {}; // Track guest positions for reverse sync
                 // Check for stale keepalives (only for active connections)
                 if (iceState === 'connected' || iceState === 'completed') {
                     const lastKeepalive = lastKeepaliveReceived[peerId];
-                    if (lastKeepalive && (now - lastKeepalive) > CONNECTION_KEEPALIVE_INTERVAL * 5) { // More forgiving: 5x instead of 4x
-                        console.warn(`[CONN-MONITOR] ${peerId}: No keepalive for ${Math.floor((now - lastKeepalive) / 1000)}s`);
+                    const lastPingResponse = channel?._lastPingResponse || 0;
+                    
+                    // Only worry about keepalives if we haven't had ANY response (keepalive OR ping) recently
+                    const lastAnyResponse = Math.max(lastKeepalive || 0, lastPingResponse);
+                    
+                    if (lastAnyResponse > 0 && (now - lastAnyResponse) > CONNECTION_KEEPALIVE_INTERVAL * 6) { // Very conservative: 6x interval
+                        console.warn(`[CONN-MONITOR] ${peerId}: No response (keepalive OR ping) for ${Math.floor((now - lastAnyResponse) / 1000)}s`);
                         
-                        // Only try to ping if we haven't pinged recently and buffer is not full
+                        // Only try to ping if we haven't pinged very recently
                         if (channel && channel.readyState === 'open' && 
                             channel.bufferedAmount < 4096 && 
-                            (!channel._lastPingTime || (now - channel._lastPingTime) > 60000)) { // Reduced ping frequency: 60s instead of 30s
+                            (!channel._lastPingTime || (now - channel._lastPingTime) > 90000)) { // Very conservative: 90s between pings
                             
                             try {
                                 channel.send(JSON.stringify({ type: 'PING', timestamp: now }));
                                 channel._lastPingTime = now;
-                                console.log(`[CONN-MONITOR] Sent recovery ping to ${peerId}`);
+                                console.log(`[CONN-MONITOR] Sent connection test ping to ${peerId}`);
                             } catch (e) {
                                 console.warn(`[CONN-MONITOR] Failed to ping ${peerId}:`, e.message);
                             }
