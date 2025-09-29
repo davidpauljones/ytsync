@@ -1770,7 +1770,6 @@ let guestTimePositions = {}; // Track guest positions for reverse sync
                 // Only trigger migration if not already in progress and we haven't become host
                 if (!hostMigrationInProgress && !isHost) {
                     console.log('[DC:host] Triggering host migration from data channel close');
-                    hostMigrationInProgress = true;
                     setTimeout(() => handleHostDisconnection(), 500);
                 }
                 return;
@@ -2624,8 +2623,8 @@ let guestTimePositions = {}; // Track guest positions for reverse sync
             }
         }, 10000);
         
-        // Store cleanup function for later use
-        pc._hostActivityCleanup = () => {
+        // Store cleanup function globally for later use
+        window._hostActivityCleanup = () => {
             if (hostActivityInterval) clearInterval(hostActivityInterval);
             hostActivityListener();
         };
@@ -2716,6 +2715,12 @@ let guestTimePositions = {}; // Track guest positions for reverse sync
         if (connectionMonitorInterval) {
             clearInterval(connectionMonitorInterval);
             connectionMonitorInterval = null;
+        }
+        
+        // Clear host activity monitoring
+        if (window._hostActivityCleanup) {
+            window._hostActivityCleanup();
+            delete window._hostActivityCleanup;
         }
         
         // Clear keepalive tracking
