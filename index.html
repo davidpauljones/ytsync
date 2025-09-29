@@ -1079,7 +1079,7 @@
             clearInterval(adDetectionTimer);
         }
         
-        // Start checking for ads every 3 seconds during loading
+        // Start checking for ads every 5 seconds during loading (less aggressive)
         adDetectionTimer = setInterval(() => {
             console.log(`[AD-DETECT-DEBUG] Timer tick - isHost: ${isHost}, player: ${!!player}`);
             
@@ -1087,11 +1087,13 @@
                 const state = player.getPlayerState();
                 console.log(`[AD-DETECT-DEBUG] Player state: ${state} (${YT_STATE[state]})`);
                 
-                // Check for ads if we're stuck in buffering or unstarted state (for both hosts and guests)
+                // Only check for ads after initial loading period and if we detect actual ad indicators
                 if (state === YT.PlayerState.BUFFERING || state === YT.PlayerState.UNSTARTED) {
-                    console.log(`[AD-DETECT] Timer check during loading state: ${YT_STATE[state]}`);
+                    // Get timing information to avoid interfering with normal loading
+                    const timeSinceVideoLoad = Date.now() - (window.lastVideoLoadTime || 0);
+                    const isInitialLoading = timeSinceVideoLoad < 10000; // First 10 seconds
                     
-                    // Enhanced diagnostic information
+                    // Enhanced diagnostic information (less verbose during initial loading)
                     const duration = player.getDuration();
                     const currentTime = player.getCurrentTime();
                     const videoData = player.getVideoData();
@@ -1103,35 +1105,33 @@
                         broadcastData({ type: 'VIDEO_DURATION', duration: duration });
                     }
                     
-                    console.log(`[AD-DETECT] Player details: duration=${duration}, time=${currentTime}, videoId=${videoData?.video_id}`);
-                    console.log(`[AD-DETECT] Expected: currentVideoId=${currentVideoId}, officialDuration=${officialVideoDuration}`);
-                    
-                    // Check for any ad-related DOM elements
-                    const adElements = {
+                    // Only do intensive ad detection if we suspect there's actually an ad
+                    const potentialAdIndicators = {
                         skipButton: document.querySelector('.ytp-ad-skip-button-modern.ytp-button'),
                         skipButtonAlt: document.querySelector('.ytp-ad-skip-button'),
                         adOverlay: document.querySelector('.ytp-ad-overlay-container'),
-                        adText: document.querySelector('.ytp-ad-text'),
-                        adModule: document.querySelector('.ytp-ad-module')
+                        controlsHidden: arePlayerControlsHidden()
                     };
                     
-                    console.log('[AD-DETECT] Ad elements found:', Object.fromEntries(
-                        Object.entries(adElements).map(([key, element]) => [key, !!element])
-                    ));
+                    const hasAdIndicators = Object.values(potentialAdIndicators).some(indicator => indicator);
                     
-                    // Check if controls are hidden
-                    const controlsHidden = arePlayerControlsHidden();
-                    console.log(`[AD-DETECT] Controls hidden: ${controlsHidden}`);
-                    
-                    if (isHost) {
-                        // Check if ad is playing but don't try to skip it
-                        const adPlaying = isAdPlaying();
-                        if (adPlaying) {
-                            console.log('[SYNC] Host detected ad playing, avoiding sync broadcasts');
+                    if (hasAdIndicators && !isInitialLoading) {
+                        console.log(`[AD-DETECT] Potential ad detected during ${YT_STATE[state]} state`);
+                        console.log(`[AD-DETECT] Player details: duration=${duration}, time=${currentTime}, videoId=${videoData?.video_id}`);
+                        
+                        if (isHost) {
+                            // Check if ad is playing but don't try to skip it
+                            const adPlaying = isAdPlaying();
+                            if (adPlaying) {
+                                console.log('[SYNC] Host detected ad playing, avoiding sync broadcasts');
+                            }
+                        } else {
+                            // Guest waits for host sync
+                            console.log(`[AD-DETECT] Guest detected ad, waiting for host sync`);
                         }
-                    } else {
-                        // Guest just waits for host sync instead of trying recovery
-                        console.log(`[AD-DETECT] Guest detected potential ad state, waiting for host sync`);
+                    } else if (isInitialLoading) {
+                        // During initial loading, just log minimal info
+                        console.log(`[AD-DETECT] Initial loading phase (${YT_STATE[state]}), allowing normal startup`);
                     }
                 } else if (state === YT.PlayerState.PLAYING) {
                     console.log('[AD-DETECT] Video playing, stopping timer');
@@ -1142,7 +1142,7 @@
             } else {
                 console.log('[AD-DETECT-DEBUG] No player object available');
             }
-        }, 3000);
+        }, 5000);
         
         // Clear timer after 30 seconds max
         setTimeout(() => {
@@ -1858,6 +1858,7 @@ let guestTimePositions = {}; // Track guest positions for reverse sync
             console.log('[DATA] Guest loading video locally first:', data.videoId);
             loadingNewVideo = true;
             currentVideoId = data.videoId;
+            window.lastVideoLoadTime = Date.now(); // Track load time for ad detection
             hideUpNextOverlay();
             updateVideoTitle();
             
@@ -2294,6 +2295,7 @@ let guestTimePositions = {}; // Track guest positions for reverse sync
                 isSyncingFromHost = true;
                 officialVideoDuration = data.duration;
                 if (player.getVideoData()?.video_id !== data.videoId) {
+                    window.lastVideoLoadTime = Date.now(); // Track load time for ad detection
                     player.loadVideoById(data.videoId, data.time);
                     
                     // Start ad detection timer for both hosts and guests during INITIAL_SYNC
@@ -2352,6 +2354,7 @@ let guestTimePositions = {}; // Track guest positions for reverse sync
                 loadingNewVideo = true;
                 officialVideoDuration = 0;
                 currentVideoId = data.videoId;
+                window.lastVideoLoadTime = Date.now(); // Track load time for ad detection
                 hideUpNextOverlay();
                 updateVideoTitle();
                 
