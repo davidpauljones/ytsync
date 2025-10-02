@@ -965,53 +965,9 @@
 
     }
     
-    // Utility function to detect if player controls are hidden (indicating ads)
-    function arePlayerControlsHidden() {
-        try {
-            // Check multiple control elements
-            const controlSelectors = [
-                '.ytp-chrome-bottom',
-                '.ytp-chrome-controls', 
-                '.ytp-progress-bar-container',
-                '.ytp-progress-bar',
-                '.ytp-play-button',
-                '.ytp-time-display'
-            ];
-            
-            let hiddenCount = 0;
-            let totalChecked = 0;
-            
-            controlSelectors.forEach(selector => {
-                const element = document.querySelector(selector);
-                if (element) {
-                    totalChecked++;
-                    const computed = window.getComputedStyle(element);
-                    const isHidden = (
-                        element.style.display === 'none' ||
-                        element.style.visibility === 'hidden' ||
-                        element.style.opacity === '0' ||
-                        computed.display === 'none' ||
-                        computed.visibility === 'hidden' ||
-                        computed.opacity === '0'
-                    );
-                    
-                    if (isHidden) {
-                        hiddenCount++;
-                    }
-                }
-            });
-            
-            // If more than half the controls are hidden, likely an ad
-            const hiddenPercentage = totalChecked > 0 ? hiddenCount / totalChecked : 0;
-            return hiddenPercentage > 0.5;
-            
-        } catch (error) {
-            console.warn('[AD-DETECT] Error checking control visibility:', error);
-            return false;
-        }
-    }
 
-    // Enhanced ad detection and skipping system
+
+    // Simple duration-based ad detection
     function isAdPlaying() {
         if (!player || typeof player.getDuration !== 'function') return false;
         
@@ -1019,29 +975,14 @@
         const currentTime = player.getCurrentTime();
         const playerState = player.getPlayerState();
         
-        // Method 1: Duration comparison (if we have expected duration)
+        // Only use duration comparison method
         if (officialVideoDuration > 0) {
-            const durationMismatch = Math.abs(currentDuration - officialVideoDuration) > 10;
-            const likelyAd = currentDuration > 0 && currentDuration < 120;
-            const contentVideo = officialVideoDuration > 120;
+            const durationMismatch = Math.abs(currentDuration - officialVideoDuration) > 30;
             
-            if (durationMismatch && likelyAd && contentVideo) {
-                console.log(`[AD-DETECT] Ad detected: duration mismatch ${currentDuration}s vs expected ${officialVideoDuration}s`);
+            if (durationMismatch) {
+                console.log(`[AD-DETECT] Duration mismatch detected: ${currentDuration}s vs expected ${officialVideoDuration}s`);
                 return true;
             }
-        }
-        
-        // Method 2: UNSTARTED state with progressing time (YouTube pre-roll ad quirk)
-        if (playerState === YT.PlayerState.UNSTARTED && currentTime > 0 && currentTime < 60 && 
-            officialVideoDuration > 0 && currentDuration === officialVideoDuration) {
-            console.log(`[AD-DETECT] Ad detected: UNSTARTED state with progressing time ${currentTime.toFixed(1)}s`);
-            return true;
-        }
-        
-        // Method 3: Very short durations are likely ads
-        if (currentDuration > 0 && currentDuration <= 30 && currentTime < 25) {
-            console.log(`[AD-DETECT] Ad detected: short duration ${currentDuration}s`);
-            return true;
         }
         
         return false;
@@ -1105,31 +1046,24 @@
                         broadcastData({ type: 'VIDEO_DURATION', duration: duration });
                     }
                     
-                    // Only do intensive ad detection if we suspect there's actually an ad
-                    const potentialAdIndicators = {
-                        skipButton: document.querySelector('.ytp-ad-skip-button-modern.ytp-button'),
-                        skipButtonAlt: document.querySelector('.ytp-ad-skip-button'),
-                        adOverlay: document.querySelector('.ytp-ad-overlay-container'),
-                        controlsHidden: arePlayerControlsHidden()
-                    };
-                    
-                    const hasAdIndicators = Object.values(potentialAdIndicators).some(indicator => indicator);
-                    
-                    if (hasAdIndicators && !isInitialLoading) {
-                        console.log(`[AD-DETECT] Potential ad detected during ${YT_STATE[state]} state`);
+                    // Simple duration-based detection during non-initial loading
+                    if (!isInitialLoading) {
+                        console.log(`[AD-DETECT] Checking during ${YT_STATE[state]} state`);
                         console.log(`[AD-DETECT] Player details: duration=${duration}, time=${currentTime}, videoId=${videoData?.video_id}`);
                         
-                        if (isHost) {
-                            // Check if ad is playing but don't try to skip it
-                            const adPlaying = isAdPlaying();
-                            if (adPlaying) {
-                                console.log('[SYNC] Host detected ad playing, avoiding sync broadcasts');
+                        // Duration-based ad detection: if duration is 0 or very different from expected
+                        const durationMismatch = officialVideoDuration > 0 && (duration === 0 || Math.abs(duration - officialVideoDuration) > 30);
+                        
+                        if (durationMismatch) {
+                            console.log(`[AD-DETECT] Duration mismatch detected - expected: ${officialVideoDuration}s, got: ${duration}s`);
+                            
+                            if (isHost) {
+                                console.log('[SYNC] Host detected ad based on duration, avoiding sync broadcasts');
+                            } else {
+                                console.log(`[AD-DETECT] Guest detected ad based on duration, waiting for host sync`);
                             }
-                        } else {
-                            // Guest waits for host sync
-                            console.log(`[AD-DETECT] Guest detected ad, waiting for host sync`);
                         }
-                    } else if (isInitialLoading) {
+                    } else {
                         // During initial loading, just log minimal info
                         console.log(`[AD-DETECT] Initial loading phase (${YT_STATE[state]}), allowing normal startup`);
                     }
