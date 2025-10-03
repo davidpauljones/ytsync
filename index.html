@@ -2019,6 +2019,13 @@ let guestTimePositions = {}; // Track guest positions for reverse sync
                 const queueUpdateData = { type: 'QUEUE_UPDATE', queue: videoQueue };
                 broadcastData(queueUpdateData);
                 return; // Exit early to avoid normal state processing
+            } else {
+                // For guests, don't send ENDED state if there are videos in queue
+                // The host will handle queue progression
+                if (videoQueue.length > 0) {
+                    console.log('[GUEST] Video ended but queue exists - letting host handle progression');
+                    return; // Don't send ENDED state to host
+                }
             }
         }
 
@@ -2135,12 +2142,39 @@ let guestTimePositions = {}; // Track guest positions for reverse sync
             if (!isHost) {
                 const currentTime = player.getCurrentTime();
                 
-                // Don't send PAUSED or ENDED states if the guest is ahead of where they should be
-                if (state === YT.PlayerState.PAUSED || state === YT.PlayerState.ENDED) {
-                    // Check if we're ahead - if so, don't send this pause/end to host
+                // Extra restrictive handling for ENDED states
+                if (state === YT.PlayerState.ENDED) {
+                    // Never send ENDED if there are videos in queue - host handles this
+                    if (videoQueue.length > 0) {
+                        console.log(`[GUEST] Suppressing ENDED state - queue has ${videoQueue.length} videos, letting host handle`);
+                        return;
+                    }
+                    
+                    // Don't send ENDED if we're ahead of expected time
+                    const expectedTime = getExpectedGuestTime();
+                    if (currentTime > expectedTime + 2) { // Even stricter tolerance for ENDED
+                        console.log(`[GUEST] Suppressing ENDED state - guest ahead (${currentTime.toFixed(1)}s vs expected ${expectedTime.toFixed(1)}s)`);
+                        return;
+                    }
+                    
+                    // Don't send ENDED if host is likely still playing (check recent sync)
+                    if (window.lastHostSyncTimestamp && Date.now() - window.lastHostSyncTimestamp < 5000) {
+                        const timeSinceLastSync = (Date.now() - window.lastHostSyncTimestamp) / 1000;
+                        const estimatedHostTime = window.lastHostSyncTime + timeSinceLastSync;
+                        const hostDuration = officialVideoDuration || player.getDuration();
+                        
+                        if (hostDuration > 0 && estimatedHostTime < hostDuration - 3) {
+                            console.log(`[GUEST] Suppressing ENDED state - host likely not finished (estimated host time: ${estimatedHostTime.toFixed(1)}s of ${hostDuration.toFixed(1)}s)`);
+                            return;
+                        }
+                    }
+                }
+                
+                // Don't send PAUSED states if the guest is ahead of where they should be
+                if (state === YT.PlayerState.PAUSED) {
                     const expectedTime = getExpectedGuestTime();
                     if (currentTime > expectedTime + 3) { // 3 second tolerance
-                        console.log(`[GUEST] Suppressing ${YT_STATE[state]} state - guest ahead (${currentTime.toFixed(1)}s vs expected ${expectedTime.toFixed(1)}s)`);
+                        console.log(`[GUEST] Suppressing PAUSED state - guest ahead (${currentTime.toFixed(1)}s vs expected ${expectedTime.toFixed(1)}s)`);
                         return; // Don't send this state change
                     }
                 }
@@ -2201,10 +2235,33 @@ let guestTimePositions = {}; // Track guest positions for reverse sync
             const hostTime = player ? player.getCurrentTime() : 0;
             const guestTime = data.time || 0;
             const timeDiff = Math.abs(hostTime - guestTime);
+            const hostState = player ? player.getPlayerState() : YT.PlayerState.UNSTARTED;
             
-            // Don't honor guest pause/stop requests if guest is significantly ahead
-            if ((data.state === YT.PlayerState.PAUSED || data.state === YT.PlayerState.ENDED) && guestTime > hostTime + 3) {
-                console.log(`[HOST] Ignoring guest ${YT_STATE[data.state]} request - guest ahead (${guestTime.toFixed(1)}s vs host ${hostTime.toFixed(1)}s)`);
+            // Special handling for ENDED state - very restrictive
+            if (data.state === YT.PlayerState.ENDED) {
+                // If host is not near the end, ignore guest ENDED
+                const hostDuration = player ? player.getDuration() : 0;
+                if (hostDuration > 0 && hostTime < hostDuration - 5) {
+                    console.log(`[HOST] Ignoring guest ENDED request - host not near end (${hostTime.toFixed(1)}s of ${hostDuration.toFixed(1)}s)`);
+                    return;
+                }
+                
+                // If host is already loading a new video, ignore ENDED from previous video
+                if (loadingNewVideo) {
+                    console.log(`[HOST] Ignoring guest ENDED request - host already loading new video`);
+                    return;
+                }
+                
+                // If there are videos in queue, let the host handle progression
+                if (videoQueue.length > 0) {
+                    console.log(`[HOST] Ignoring guest ENDED request - queue exists (${videoQueue.length} videos)`);
+                    return;
+                }
+            }
+            
+            // Don't honor guest pause requests if guest is significantly ahead
+            if (data.state === YT.PlayerState.PAUSED && guestTime > hostTime + 3) {
+                console.log(`[HOST] Ignoring guest PAUSED request - guest ahead (${guestTime.toFixed(1)}s vs host ${hostTime.toFixed(1)}s)`);
                 return; // Don't process this request
             }
             
