@@ -2141,10 +2141,15 @@ let guestTimePositions = {}; // Track guest positions for reverse sync
         
     // FIXED: Host should process guest requests AND apply them locally
     if (isHost && data.type.startsWith('REQUEST_')) {
-        // Block pause requests from guests
-        if (data.type === 'REQUEST_STATE_CHANGE' && data.state === YT.PlayerState.PAUSED) {
-            console.log(`[GUEST-CONTROL] Blocked pause request from guest ${senderId}`);
-            return; // Don't process pause requests from guests
+        // Check if we should ignore guest state changes in the last 10 seconds
+        if (data.type === 'REQUEST_STATE_CHANGE') {
+            const currentTime = data.time || (player ? player.getCurrentTime() : 0);
+            const timeRemaining = officialVideoDuration > 0 ? officialVideoDuration - currentTime : 0;
+            
+            if (timeRemaining <= 10 && timeRemaining > 0) {
+                console.log(`[SYNC] Ignoring guest state change request - ${timeRemaining.toFixed(1)}s remaining (< 10s)`);
+                return; // Ignore guest requests in last 10 seconds
+            }
         }
         
         // Collect guest time positions for reverse sync
