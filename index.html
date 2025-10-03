@@ -650,6 +650,7 @@
     let localUserList = {};
     // Track the currently loaded videoId
     let currentVideoId = null;
+    let earlySkipTriggered = false;
 
     // WebRTC configuration (enhanced for stability)
     const rtcConfig = {
@@ -1792,6 +1793,7 @@ let guestTimePositions = {}; // Track guest positions for reverse sync
             console.log('[DATA] Guest loading video locally first:', data.videoId);
             loadingNewVideo = true;
             currentVideoId = data.videoId;
+            earlySkipTriggered = false; // Reset early skip flag for new video
             window.lastVideoLoadTime = Date.now(); // Track load time for ad detection
             hideUpNextOverlay();
             updateVideoTitle();
@@ -2288,6 +2290,7 @@ let guestTimePositions = {}; // Track guest positions for reverse sync
                 loadingNewVideo = true;
                 officialVideoDuration = 0;
                 currentVideoId = data.videoId;
+                earlySkipTriggered = false; // Reset early skip flag for new video
                 window.lastVideoLoadTime = Date.now(); // Track load time for ad detection
                 hideUpNextOverlay();
                 updateVideoTitle();
@@ -2622,6 +2625,22 @@ let guestTimePositions = {}; // Track guest positions for reverse sync
             if (isHost && player && typeof player.getCurrentTime === 'function') {
                 const currentState = player.getPlayerState();
                 const hostTime = player.getCurrentTime();
+                const duration = player.getDuration();
+                
+                // Check if we should skip to next video (less than 2 seconds remaining)
+                if (currentState === YT.PlayerState.PLAYING && videoQueue.length > 0 && duration > 0 && !earlySkipTriggered) {
+                    const timeRemaining = duration - hostTime;
+                    if (timeRemaining > 0 && timeRemaining < 2) {
+                        console.log(`[QUEUE] Less than 2 seconds remaining (${timeRemaining.toFixed(1)}s), skipping to next video`);
+                        earlySkipTriggered = true; // Prevent multiple triggers for same video
+                        const nextVideo = videoQueue.shift();
+                        hideUpNextOverlay();
+                        handleUserAction({ type: 'NEW_VIDEO', videoId: nextVideo.videoId, autoPlay: true });
+                        const queueUpdateData = { type: 'QUEUE_UPDATE', queue: videoQueue };
+                        broadcastData(queueUpdateData);
+                        return; // Exit early to avoid other processing
+                    }
+                }
                 
                 // Check for reverse sync scenario (host behind guests due to ad/buffer)
                 if (currentState === YT.PlayerState.PLAYING && Object.keys(guestTimePositions).length > 0) {
@@ -2651,23 +2670,6 @@ let guestTimePositions = {}; // Track guest positions for reverse sync
                             return;
                         }
                     }
-                }
-                
-                // Check if video is about to end (1 second remaining) and queue has videos
-                const duration = player.getDuration();
-                if (currentState === YT.PlayerState.PLAYING && 
-                    duration > 0 && 
-                    hostTime > 0 && 
-                    (duration - hostTime) <= 1.0 && 
-                    videoQueue.length > 0) {
-                    
-                    console.log('[QUEUE] Video has 1 second remaining, auto-advancing to next video');
-                    const nextVideo = videoQueue.shift();
-                    hideUpNextOverlay();
-                    handleUserAction({ type: 'NEW_VIDEO', videoId: nextVideo.videoId, autoPlay: true });
-                    const queueUpdateData = { type: 'QUEUE_UPDATE', queue: videoQueue };
-                    broadcastData(queueUpdateData);
-                    return; // Skip sending TIME_UPDATE since we're changing videos
                 }
                 
                 const data = { type: 'TIME_UPDATE', time: hostTime, state: currentState };
