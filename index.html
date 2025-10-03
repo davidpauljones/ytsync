@@ -1989,6 +1989,7 @@ let guestTimePositions = {}; // Track guest positions for reverse sync
 
         // Handle video ending: either show "Up Next" or play next video in queue
         if (state === YT.PlayerState.ENDED) {
+            console.log(`[QUEUE-DEBUG] Video ended - isHost: ${isHost}, queueLength: ${videoQueue.length}`);
             if (videoQueue.length === 0) {
                 // Show "Up Next" overlay when queue is empty
                 if (!upNextActive) {
@@ -2000,11 +2001,14 @@ let guestTimePositions = {}; // Track guest positions for reverse sync
                 // Play next video in queue immediately (hosts only)
                 console.log('[QUEUE] Video ended, playing next video from queue');
                 const nextVideo = videoQueue.shift();
+                console.log(`[QUEUE-DEBUG] Next video:`, nextVideo);
                 hideUpNextOverlay();
                 handleUserAction({ type: 'NEW_VIDEO', videoId: nextVideo.videoId, autoPlay: true });
                 const queueUpdateData = { type: 'QUEUE_UPDATE', queue: videoQueue };
                 broadcastData(queueUpdateData);
                 return; // Exit early to avoid normal state processing
+            } else {
+                console.log('[QUEUE-DEBUG] Guest detected video ended, waiting for host to advance queue');
             }
         }
 
