@@ -1005,6 +1005,20 @@
         return 0;
     }
     
+    function getExpectedGuestTime() {
+        // For guests, estimate where they should be based on the last sync from host
+        if (isHost) return player.getCurrentTime(); // Hosts are authoritative
+        
+        // Use the last known sync time as a baseline
+        if (window.lastHostSyncTime && window.lastHostSyncTimestamp) {
+            const timeSinceSync = (Date.now() - window.lastHostSyncTimestamp) / 1000;
+            return window.lastHostSyncTime + timeSinceSync;
+        }
+        
+        // Fallback to current position if no sync data
+        return player.getCurrentTime();
+    }
+    
 
     
 
@@ -1989,7 +2003,6 @@ let guestTimePositions = {}; // Track guest positions for reverse sync
 
         // Handle video ending: either show "Up Next" or play next video in queue
         if (state === YT.PlayerState.ENDED) {
-            console.log(`[QUEUE-DEBUG] Video ended - isHost: ${isHost}, queueLength: ${videoQueue.length}`);
             if (videoQueue.length === 0) {
                 // Show "Up Next" overlay when queue is empty
                 if (!upNextActive) {
@@ -2001,14 +2014,11 @@ let guestTimePositions = {}; // Track guest positions for reverse sync
                 // Play next video in queue immediately (hosts only)
                 console.log('[QUEUE] Video ended, playing next video from queue');
                 const nextVideo = videoQueue.shift();
-                console.log(`[QUEUE-DEBUG] Next video:`, nextVideo);
                 hideUpNextOverlay();
                 handleUserAction({ type: 'NEW_VIDEO', videoId: nextVideo.videoId, autoPlay: true });
                 const queueUpdateData = { type: 'QUEUE_UPDATE', queue: videoQueue };
                 broadcastData(queueUpdateData);
                 return; // Exit early to avoid normal state processing
-            } else {
-                console.log('[QUEUE-DEBUG] Guest detected video ended, waiting for host to advance queue');
             }
         }
 
@@ -2121,6 +2131,36 @@ let guestTimePositions = {}; // Track guest positions for reverse sync
                 console.log('[SYNC] Ad detected during PLAYING state, skipping sync');
             }
         } else {
+            // For guests, be more selective about which state changes to send to host
+            if (!isHost) {
+                const currentTime = player.getCurrentTime();
+                
+                // Don't send PAUSED or ENDED states if the guest is ahead of where they should be
+                if (state === YT.PlayerState.PAUSED || state === YT.PlayerState.ENDED) {
+                    // Check if we're ahead - if so, don't send this pause/end to host
+                    const expectedTime = getExpectedGuestTime();
+                    if (currentTime > expectedTime + 3) { // 3 second tolerance
+                        console.log(`[GUEST] Suppressing ${YT_STATE[state]} state - guest ahead (${currentTime.toFixed(1)}s vs expected ${expectedTime.toFixed(1)}s)`);
+                        return; // Don't send this state change
+                    }
+                }
+                
+                // Don't send UNSTARTED states from guests (these are usually loading issues)
+                if (state === YT.PlayerState.UNSTARTED) {
+                    console.log('[GUEST] Suppressing UNSTARTED state - likely loading issue');
+                    return;
+                }
+                
+                // Only send PLAYING states if the guest isn't too far ahead
+                if (state === YT.PlayerState.PLAYING) {
+                    const expectedTime = getExpectedGuestTime();
+                    if (currentTime > expectedTime + 5) { // 5 second tolerance for play
+                        console.log(`[GUEST] Suppressing PLAYING state - guest too far ahead (${currentTime.toFixed(1)}s vs expected ${expectedTime.toFixed(1)}s)`);
+                        return;
+                    }
+                }
+            }
+            
             const actionData = { type: 'STATE_CHANGE', state, time: player.getCurrentTime(), userInitiated: false };
             handleUserAction(actionData);
         }
@@ -2145,17 +2185,6 @@ let guestTimePositions = {}; // Track guest positions for reverse sync
         
     // FIXED: Host should process guest requests AND apply them locally
     if (isHost && data.type.startsWith('REQUEST_')) {
-        // Check if we should ignore guest state changes in the last 10 seconds
-        if (data.type === 'REQUEST_STATE_CHANGE') {
-            const currentTime = data.time || (player ? player.getCurrentTime() : 0);
-            const timeRemaining = officialVideoDuration > 0 ? officialVideoDuration - currentTime : 0;
-            
-            if (timeRemaining <= 10 && timeRemaining > 0) {
-                console.log(`[SYNC] Ignoring guest state change request - ${timeRemaining.toFixed(1)}s remaining (< 10s)`);
-                return; // Ignore guest requests in last 10 seconds
-            }
-        }
-        
         // Collect guest time positions for reverse sync
         if (data.type === 'REQUEST_STATE_CHANGE' && data.time !== undefined) {
             guestTimePositions[senderId] = {
@@ -2166,6 +2195,26 @@ let guestTimePositions = {}; // Track guest positions for reverse sync
         }
         
         const commandData = { ...data, type: data.type.replace('REQUEST_', '') };
+        
+        // For STATE_CHANGE requests, be selective about what to honor
+        if (data.type === 'REQUEST_STATE_CHANGE') {
+            const hostTime = player ? player.getCurrentTime() : 0;
+            const guestTime = data.time || 0;
+            const timeDiff = Math.abs(hostTime - guestTime);
+            
+            // Don't honor guest pause/stop requests if guest is significantly ahead
+            if ((data.state === YT.PlayerState.PAUSED || data.state === YT.PlayerState.ENDED) && guestTime > hostTime + 3) {
+                console.log(`[HOST] Ignoring guest ${YT_STATE[data.state]} request - guest ahead (${guestTime.toFixed(1)}s vs host ${hostTime.toFixed(1)}s)`);
+                return; // Don't process this request
+            }
+            
+            // Don't honor guest play requests if they're too far ahead
+            if (data.state === YT.PlayerState.PLAYING && guestTime > hostTime + 5) {
+                console.log(`[HOST] Ignoring guest PLAYING request - guest too far ahead (${guestTime.toFixed(1)}s vs host ${hostTime.toFixed(1)}s)`);
+                return; // Don't process this request
+            }
+        }
+        
         // Apply the command to host's own player first
         handleReceivedData(commandData, 'local');
         // Then broadcast to OTHER guests (exclude the sender to prevent echo)
@@ -2374,6 +2423,12 @@ let guestTimePositions = {}; // Track guest positions for reverse sync
                 isSyncingFromHost = true;
                 lastPlayerState = data.state;
                 
+                // Track host sync time for guest position estimation
+                if (!isHost && data.time !== undefined) {
+                    window.lastHostSyncTime = data.time;
+                    window.lastHostSyncTimestamp = Date.now();
+                }
+                
                 console.log('[DATA] Sync message received for state:', data.state);
                 
                 // Set a timeout to reset the sync flag
@@ -2400,6 +2455,12 @@ let guestTimePositions = {}; // Track guest positions for reverse sync
                     return;
                 }
                 if (!isHost) {
+                    // Track host sync time for guest position estimation
+                    if (data.time !== undefined) {
+                        window.lastHostSyncTime = data.time;
+                        window.lastHostSyncTimestamp = Date.now();
+                    }
+                    
                     // Check if we're syncing to the same video
                     const currentVideoData = player.getVideoData();
                     const currentVideoId = currentVideoData ? currentVideoData.video_id : null;
