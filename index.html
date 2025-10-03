@@ -650,7 +650,6 @@
     let localUserList = {};
     // Track the currently loaded videoId
     let currentVideoId = null;
-    let earlySkipTriggered = false;
 
     // WebRTC configuration (enhanced for stability)
     const rtcConfig = {
@@ -1793,7 +1792,6 @@ let guestTimePositions = {}; // Track guest positions for reverse sync
             console.log('[DATA] Guest loading video locally first:', data.videoId);
             loadingNewVideo = true;
             currentVideoId = data.videoId;
-            earlySkipTriggered = false; // Reset early skip flag for new video
             window.lastVideoLoadTime = Date.now(); // Track load time for ad detection
             hideUpNextOverlay();
             updateVideoTitle();
@@ -1813,12 +1811,25 @@ let guestTimePositions = {}; // Track guest positions for reverse sync
                 }, 1000);
                 
                 if (data.autoPlay) {
-                    // Set a flag to auto-play once loaded
-                    setTimeout(() => {
-                        if (player.getPlayerState() === YT.PlayerState.CUED) {
+                    // Set a flag to auto-play once loaded (more robust retry logic)
+                    console.log('[GUEST-AUTOPLAY] Setting up auto-play for guest');
+                    let autoPlayAttempts = 0;
+                    const tryAutoPlay = () => {
+                        const state = player.getPlayerState();
+                        console.log(`[GUEST-AUTOPLAY] Attempt ${autoPlayAttempts + 1}, player state: ${YT_STATE[state]}`);
+                        
+                        if (state === YT.PlayerState.CUED) {
+                            console.log('[GUEST-AUTOPLAY] Video cued, starting playback');
                             player.playVideo();
+                        } else if (autoPlayAttempts < 5 && (state === YT.PlayerState.UNSTARTED || state === YT.PlayerState.BUFFERING)) {
+                            // Retry up to 5 times if still loading
+                            autoPlayAttempts++;
+                            setTimeout(tryAutoPlay, 1000);
+                        } else {
+                            console.log(`[GUEST-AUTOPLAY] Giving up after ${autoPlayAttempts + 1} attempts, final state: ${YT_STATE[state]}`);
                         }
-                    }, 1000);
+                    };
+                    setTimeout(tryAutoPlay, 1000);
                 }
             }
         }
@@ -1991,6 +2002,7 @@ let guestTimePositions = {}; // Track guest positions for reverse sync
 
         // Handle video ending: either show "Up Next" or play next video in queue
         if (state === YT.PlayerState.ENDED) {
+            console.log(`[QUEUE-DEBUG] Video ended. Queue length: ${videoQueue.length}, isHost: ${isHost}`);
             if (videoQueue.length === 0) {
                 // Show "Up Next" overlay when queue is empty
                 if (!upNextActive) {
@@ -2001,12 +2013,16 @@ let guestTimePositions = {}; // Track guest positions for reverse sync
             } else if (isHost) {
                 // Play next video in queue immediately (hosts only)
                 console.log('[QUEUE] Video ended, playing next video from queue');
+                console.log('[QUEUE-DEBUG] Next video:', videoQueue[0]);
                 const nextVideo = videoQueue.shift();
                 hideUpNextOverlay();
+                console.log('[QUEUE-DEBUG] Calling handleUserAction with NEW_VIDEO and autoPlay: true');
                 handleUserAction({ type: 'NEW_VIDEO', videoId: nextVideo.videoId, autoPlay: true });
                 const queueUpdateData = { type: 'QUEUE_UPDATE', queue: videoQueue };
                 broadcastData(queueUpdateData);
                 return; // Exit early to avoid normal state processing
+            } else {
+                console.log('[QUEUE-DEBUG] Guest detected video end, waiting for host to advance queue');
             }
         }
 
@@ -2290,7 +2306,6 @@ let guestTimePositions = {}; // Track guest positions for reverse sync
                 loadingNewVideo = true;
                 officialVideoDuration = 0;
                 currentVideoId = data.videoId;
-                earlySkipTriggered = false; // Reset early skip flag for new video
                 window.lastVideoLoadTime = Date.now(); // Track load time for ad detection
                 hideUpNextOverlay();
                 updateVideoTitle();
@@ -2625,22 +2640,6 @@ let guestTimePositions = {}; // Track guest positions for reverse sync
             if (isHost && player && typeof player.getCurrentTime === 'function') {
                 const currentState = player.getPlayerState();
                 const hostTime = player.getCurrentTime();
-                const duration = player.getDuration();
-                
-                // Check if we should skip to next video (less than 2 seconds remaining)
-                if (currentState === YT.PlayerState.PLAYING && videoQueue.length > 0 && duration > 0 && !earlySkipTriggered) {
-                    const timeRemaining = duration - hostTime;
-                    if (timeRemaining > 0 && timeRemaining < 2) {
-                        console.log(`[QUEUE] Less than 2 seconds remaining (${timeRemaining.toFixed(1)}s), skipping to next video`);
-                        earlySkipTriggered = true; // Prevent multiple triggers for same video
-                        const nextVideo = videoQueue.shift();
-                        hideUpNextOverlay();
-                        handleUserAction({ type: 'NEW_VIDEO', videoId: nextVideo.videoId, autoPlay: true });
-                        const queueUpdateData = { type: 'QUEUE_UPDATE', queue: videoQueue };
-                        broadcastData(queueUpdateData);
-                        return; // Exit early to avoid other processing
-                    }
-                }
                 
                 // Check for reverse sync scenario (host behind guests due to ad/buffer)
                 if (currentState === YT.PlayerState.PLAYING && Object.keys(guestTimePositions).length > 0) {
