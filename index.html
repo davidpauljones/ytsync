@@ -319,6 +319,28 @@
         body.theater-mode .expand-icon { display: none; }
         body.theater-mode .close-icon { display: block; }
         .hidden { display: none !important; }
+        
+        /* Guest playback control notification */
+        .guest-control-notice {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            background: rgba(0, 0, 0, 0.8);
+            color: white;
+            padding: 12px 20px;
+            border-radius: 8px;
+            font-size: 14px;
+            font-weight: 500;
+            z-index: 1000;
+            pointer-events: none;
+            opacity: 0;
+            transition: opacity 0.3s ease;
+        }
+        
+        .guest-control-notice.show {
+            opacity: 1;
+        }
 
         /* Centered close button for theater mode */
         #theaterCloseBtn {
@@ -494,6 +516,10 @@
     <div class="page-container">
         <div class="main-content">
             <div class="player-container"><div id="player"></div>
+                <!-- Guest control notification -->
+                <div id="guestControlNotice" class="guest-control-notice">
+                    Only the host can control playback
+                </div>
                 <!-- Up Next overlay -->
                 <div id="upNextOverlay" class="upnext-overlay" aria-hidden="true">
                     <div class="upnext-title">Up next</div>
@@ -1187,6 +1213,18 @@
         }
     });
 
+    // Show guest control notification
+    function showGuestControlNotice() {
+        if (isHost) return; // Only show for guests
+        
+        const notice = document.getElementById('guestControlNotice');
+        notice.classList.add('show');
+        
+        setTimeout(() => {
+            notice.classList.remove('show');
+        }, 2000);
+    }
+    
     // --- YOUTUBE API ---
     window.onYouTubeIframeAPIReady = () => {
         player = new YT.Player('player', {
@@ -1195,7 +1233,9 @@
                 rel: 0,
                 playsinline: 1,
                 modestbranding: 1,
-                origin: window.location.origin
+                origin: window.location.origin,
+                // Disable controls for guests to prevent play/pause
+                controls: isHost ? 1 : 0
             },
             events: { 
                 'onStateChange': onPlayerStateChange,
@@ -1203,6 +1243,16 @@
                     console.log('[YT] Player ready');
                     playerReady = true;
                     processPendingMessages();
+                    
+                    // Add click handler for guests on player container
+                    if (!isHost) {
+                        document.querySelector('.player-container').addEventListener('click', (e) => {
+                            // Only show notice if clicking on the player area
+                            if (e.target.closest('#player') || e.target.classList.contains('player-container')) {
+                                showGuestControlNotice();
+                            }
+                        });
+                    }
                 }
             }
         });
@@ -1811,25 +1861,12 @@ let guestTimePositions = {}; // Track guest positions for reverse sync
                 }, 1000);
                 
                 if (data.autoPlay) {
-                    // Set a flag to auto-play once loaded (more robust retry logic)
-                    console.log('[GUEST-AUTOPLAY] Setting up auto-play for guest');
-                    let autoPlayAttempts = 0;
-                    const tryAutoPlay = () => {
-                        const state = player.getPlayerState();
-                        console.log(`[GUEST-AUTOPLAY] Attempt ${autoPlayAttempts + 1}, player state: ${YT_STATE[state]}`);
-                        
-                        if (state === YT.PlayerState.CUED) {
-                            console.log('[GUEST-AUTOPLAY] Video cued, starting playback');
+                    // Set a flag to auto-play once loaded
+                    setTimeout(() => {
+                        if (player.getPlayerState() === YT.PlayerState.CUED) {
                             player.playVideo();
-                        } else if (autoPlayAttempts < 5 && (state === YT.PlayerState.UNSTARTED || state === YT.PlayerState.BUFFERING)) {
-                            // Retry up to 5 times if still loading
-                            autoPlayAttempts++;
-                            setTimeout(tryAutoPlay, 1000);
-                        } else {
-                            console.log(`[GUEST-AUTOPLAY] Giving up after ${autoPlayAttempts + 1} attempts, final state: ${YT_STATE[state]}`);
                         }
-                    };
-                    setTimeout(tryAutoPlay, 1000);
+                    }, 1000);
                 }
             }
         }
@@ -2002,7 +2039,6 @@ let guestTimePositions = {}; // Track guest positions for reverse sync
 
         // Handle video ending: either show "Up Next" or play next video in queue
         if (state === YT.PlayerState.ENDED) {
-            console.log(`[QUEUE-DEBUG] Video ended. Queue length: ${videoQueue.length}, isHost: ${isHost}`);
             if (videoQueue.length === 0) {
                 // Show "Up Next" overlay when queue is empty
                 if (!upNextActive) {
@@ -2013,16 +2049,12 @@ let guestTimePositions = {}; // Track guest positions for reverse sync
             } else if (isHost) {
                 // Play next video in queue immediately (hosts only)
                 console.log('[QUEUE] Video ended, playing next video from queue');
-                console.log('[QUEUE-DEBUG] Next video:', videoQueue[0]);
                 const nextVideo = videoQueue.shift();
                 hideUpNextOverlay();
-                console.log('[QUEUE-DEBUG] Calling handleUserAction with NEW_VIDEO and autoPlay: true');
                 handleUserAction({ type: 'NEW_VIDEO', videoId: nextVideo.videoId, autoPlay: true });
                 const queueUpdateData = { type: 'QUEUE_UPDATE', queue: videoQueue };
                 broadcastData(queueUpdateData);
                 return; // Exit early to avoid normal state processing
-            } else {
-                console.log('[QUEUE-DEBUG] Guest detected video end, waiting for host to advance queue');
             }
         }
 
@@ -2120,23 +2152,40 @@ let guestTimePositions = {}; // Track guest positions for reverse sync
         // Remove hidden tab pause suppression - we want videos to keep playing
         // regardless of tab focus state
 
-        if (isHost && state === YT.PlayerState.PLAYING) {
-            const duration = player.getDuration();
-            if (Math.abs(duration - officialVideoDuration) > 1) {
-                officialVideoDuration = duration;
-                broadcastData({ type: 'VIDEO_DURATION', duration: duration });
-            }
-            
-            // Check if ad is playing to avoid syncing during ads
-            if (!isAdPlaying()) {
+        // Only allow hosts to control playback state (play/pause)
+        if (isHost) {
+            if (state === YT.PlayerState.PLAYING) {
+                const duration = player.getDuration();
+                if (Math.abs(duration - officialVideoDuration) > 1) {
+                    officialVideoDuration = duration;
+                    broadcastData({ type: 'VIDEO_DURATION', duration: duration });
+                }
+                
+                // Check if ad is playing to avoid syncing during ads
+                if (!isAdPlaying()) {
+                    const actionData = { type: 'STATE_CHANGE', state, time: player.getCurrentTime(), userInitiated: false };
+                    handleUserAction(actionData);
+                } else {
+                    console.log('[SYNC] Ad detected during PLAYING state, skipping sync');
+                }
+            } else if (state === YT.PlayerState.PAUSED) {
+                // Host can pause
                 const actionData = { type: 'STATE_CHANGE', state, time: player.getCurrentTime(), userInitiated: false };
                 handleUserAction(actionData);
             } else {
-                console.log('[SYNC] Ad detected during PLAYING state, skipping sync');
+                // Host can send other state changes (buffering, ended, etc.)
+                const actionData = { type: 'STATE_CHANGE', state, time: player.getCurrentTime(), userInitiated: false };
+                handleUserAction(actionData);
             }
         } else {
-            const actionData = { type: 'STATE_CHANGE', state, time: player.getCurrentTime(), userInitiated: false };
-            handleUserAction(actionData);
+            // Guests cannot control playback - only send non-playback state changes
+            if (state !== YT.PlayerState.PLAYING && state !== YT.PlayerState.PAUSED) {
+                console.log('[GUEST] Guest can only send non-playback state changes');
+                const actionData = { type: 'STATE_CHANGE', state, time: player.getCurrentTime(), userInitiated: false };
+                handleUserAction(actionData);
+            } else {
+                console.log(`[GUEST] Guest attempted to send ${YT_STATE[state]} state - blocked (only host can control playback)`);
+            }
         }
     }
 
