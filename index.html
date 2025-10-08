@@ -1215,6 +1215,14 @@
                 'onStateChange': onPlayerStateChange,
                 'onReady': () => {
                     console.log('[YT] Player ready');
+                    
+                    // Fix Chrome bug: Add allow="autoplay" to iframe
+                    const iframe = player.getIframe();
+                    if (iframe && !iframe.hasAttribute('allow')) {
+                        iframe.setAttribute('allow', 'autoplay');
+                        console.log('[YT] Added allow="autoplay" to iframe');
+                    }
+                    
                     playerReady = true;
                     processPendingMessages();
                 }
