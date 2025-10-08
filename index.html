@@ -521,9 +521,6 @@
                     <button id="skipVideoBtn" title="Skip to Next Video" disabled>
                         <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="5,4 15,12 5,20"></polygon><line x1="19" y1="5" x2="19" y2="19"></line></svg>
                     </button>
-                    <button id="pipBtn" title="Picture-in-Picture">
-                        <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="20" height="14" rx="2" ry="2"></rect><rect x="13" y="11" width="8" height="6" rx="1" ry="1"></rect></svg>
-                    </button>
                     <button id="theaterModeBtn" title="Theater Mode">
                         <svg class="expand-icon" xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 3H5a2 2 0 0 0-2 2v3m18 0V5a2 2 0 0 0-2-2h-3m0 18h3a2 2 0 0 0 2-2v-3M3 16v3a2 2 0 0 0 2 2h3"/></svg>
                         <svg class="close-icon" xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
@@ -628,7 +625,6 @@
     const resultsList = document.getElementById('results');
     const queueList = document.getElementById('queueList');
     const skipVideoBtn = document.getElementById('skipVideoBtn');
-    const pipBtn = document.getElementById('pipBtn');
     const connectionStatus = document.getElementById('connectionStatus');
     const createInviteBtn = document.getElementById('createInviteBtn');
     const inviteLinkInput = document.getElementById('inviteLink');
@@ -1315,93 +1311,6 @@
             disableTheaterUi();
         }
     });
-
-    // Picture-in-Picture functionality
-    pipBtn.addEventListener('click', () => {
-        try {
-            const iframe = document.querySelector('#player');
-            if (!iframe) {
-                console.log('[PiP] Player iframe not found');
-                alert('Please load a video first.');
-                return;
-            }
-
-            // Check if PiP is supported
-            if (!document.pictureInPictureEnabled) {
-                alert('Picture-in-Picture is not supported in your browser.');
-                return;
-            }
-
-            console.log('[PiP] Simulating right-click to trigger browser PiP...');
-            
-            // Get the center of the iframe to click
-            const rect = iframe.getBoundingClientRect();
-            const centerX = rect.left + rect.width / 2;
-            const centerY = rect.top + rect.height / 2;
-
-            // Create and dispatch the first right-click event (shows YouTube's context menu)
-            const rightClick1 = new MouseEvent('contextmenu', {
-                bubbles: true,
-                cancelable: true,
-                view: window,
-                clientX: centerX,
-                clientY: centerY,
-                button: 2
-            });
-            iframe.dispatchEvent(rightClick1);
-
-            // Short delay, then dispatch second right-click (shows browser's native context menu with PiP option)
-            setTimeout(() => {
-                const rightClick2 = new MouseEvent('contextmenu', {
-                    bubbles: true,
-                    cancelable: true,
-                    view: window,
-                    clientX: centerX,
-                    clientY: centerY,
-                    button: 2
-                });
-                iframe.dispatchEvent(rightClick2);
-                
-                console.log('[PiP] Right-click events dispatched. Look for "Picture in Picture" in the context menu.');
-                
-                // Show a helpful tooltip
-                showPipTooltip(iframe);
-            }, 100);
-
-        } catch (error) {
-            console.error('[PiP] Error:', error);
-            alert('Could not trigger Picture-in-Picture. Try right-clicking the video twice manually and selecting "Picture in Picture".');
-        }
-    });
-
-    // Helper function to show a temporary tooltip
-    function showPipTooltip(iframe) {
-        const tooltip = document.createElement('div');
-        tooltip.style.cssText = `
-            position: fixed;
-            top: 50%;
-            left: 50%;
-            transform: translate(-50%, -50%);
-            background: rgba(0, 0, 0, 0.9);
-            color: white;
-            padding: 16px 24px;
-            border-radius: 8px;
-            font-size: 14px;
-            z-index: 10000;
-            text-align: center;
-            pointer-events: none;
-            box-shadow: 0 4px 12px rgba(0,0,0,0.3);
-        `;
-        tooltip.innerHTML = '📺 Right-click menu opened!<br>Select "Picture in Picture" from the menu';
-        document.body.appendChild(tooltip);
-
-        // Remove tooltip after 3 seconds
-        setTimeout(() => {
-            tooltip.style.opacity = '0';
-            tooltip.style.transition = 'opacity 0.3s';
-            setTimeout(() => tooltip.remove(), 300);
-        }, 3000);
-    }
 
     // Allow Esc to exit theater mode
     document.addEventListener('keydown', (event) => {
