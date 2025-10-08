@@ -1219,9 +1219,9 @@
                     
                     // Fix Chrome bug: Add allow="autoplay" to iframe
                     const iframe = player.getIframe();
-                    if (iframe && !iframe.hasAttribute('allow')) {
-                        iframe.setAttribute('allow', 'autoplay');
-                        console.log('[YT] Added allow="autoplay" to iframe');
+                    if (iframe) {
+                        iframe.setAttribute('allow', 'autoplay; encrypted-media; picture-in-picture');
+                        console.log('[YT] Added allow attribute to iframe for autoplay support');
                     }
                     
                     playerReady = true;
