@@ -17,14 +17,14 @@ exports.searchYoutube = onCall(async (request) => {
       response = await axios.get(
           "https://www.googleapis.com/youtube/v3/videos", {
             params: {
-              part: "snippet",
+              part: "snippet,contentDetails",
               id: videoId,
               key: apiKey,
             },
           });
     } else if (searchQuery) {
-      // Otherwise, use the 'search.list' endpoint
-      response = await axios.get(
+      // Otherwise, use the 'search.list' endpoint for search results
+      const searchResponse = await axios.get(
           "https://www.googleapis.com/youtube/v3/search", {
             params: {
               part: "snippet",
@@ -32,6 +32,21 @@ exports.searchYoutube = onCall(async (request) => {
               key: apiKey,
               type: "video",
               maxResults: 20,
+            },
+          });
+
+      // Extract video IDs from search results
+      const videoIds = searchResponse.data.items
+          .map((item) => item.id.videoId)
+          .join(",");
+
+      // Get full video details including duration
+      response = await axios.get(
+          "https://www.googleapis.com/youtube/v3/videos", {
+            params: {
+              part: "snippet,contentDetails",
+              id: videoIds,
+              key: apiKey,
             },
           });
     } else {
