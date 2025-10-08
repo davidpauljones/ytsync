@@ -521,6 +521,9 @@
                     <button id="skipVideoBtn" title="Skip to Next Video" disabled>
                         <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="5,4 15,12 5,20"></polygon><line x1="19" y1="5" x2="19" y2="19"></line></svg>
                     </button>
+                    <button id="pipBtn" title="Picture-in-Picture">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="20" height="14" rx="2" ry="2"></rect><rect x="13" y="11" width="8" height="6" rx="1" ry="1"></rect></svg>
+                    </button>
                     <button id="theaterModeBtn" title="Theater Mode">
                         <svg class="expand-icon" xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 3H5a2 2 0 0 0-2 2v3m18 0V5a2 2 0 0 0-2-2h-3m0 18h3a2 2 0 0 0 2-2v-3M3 16v3a2 2 0 0 0 2 2h3"/></svg>
                         <svg class="close-icon" xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
@@ -625,6 +628,7 @@
     const resultsList = document.getElementById('results');
     const queueList = document.getElementById('queueList');
     const skipVideoBtn = document.getElementById('skipVideoBtn');
+    const pipBtn = document.getElementById('pipBtn');
     const connectionStatus = document.getElementById('connectionStatus');
     const createInviteBtn = document.getElementById('createInviteBtn');
     const inviteLinkInput = document.getElementById('inviteLink');
@@ -1309,6 +1313,48 @@
             enableTheaterUi();
         } else {
             disableTheaterUi();
+        }
+    });
+
+    // Picture-in-Picture functionality
+    pipBtn.addEventListener('click', async () => {
+        try {
+            const iframe = document.querySelector('#player');
+            if (!iframe) {
+                console.log('[PiP] Player iframe not found');
+                return;
+            }
+
+            // Check if PiP is supported
+            if (!document.pictureInPictureEnabled) {
+                alert('Picture-in-Picture is not supported in your browser.');
+                return;
+            }
+
+            // If already in PiP, exit it
+            if (document.pictureInPictureElement) {
+                await document.exitPictureInPicture();
+                console.log('[PiP] Exited Picture-in-Picture');
+                return;
+            }
+
+            // YouTube iframes need special handling - we need to request PiP from the video element inside the iframe
+            // Since we can't directly access the video element in the YouTube iframe due to cross-origin restrictions,
+            // we'll use the iframe itself if the browser supports it
+            if (iframe.requestPictureInPicture) {
+                await iframe.requestPictureInPicture();
+                console.log('[PiP] Entered Picture-in-Picture mode');
+            } else {
+                // Fallback: Some browsers might not support PiP on iframes
+                alert('Picture-in-Picture is not available for this video player. Try using your browser\'s built-in PiP controls (right-click the video twice).');
+            }
+        } catch (error) {
+            console.error('[PiP] Error:', error);
+            if (error.name === 'NotAllowedError') {
+                alert('Picture-in-Picture requires user interaction. Please try clicking the button again.');
+            } else {
+                alert('Could not enable Picture-in-Picture. Try right-clicking the video twice and selecting "Picture in Picture".');
+            }
         }
     });
 
