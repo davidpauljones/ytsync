@@ -1497,7 +1497,7 @@
 	}
 
 	// Display a single playlist URL result with its videos
-	function displayPlaylistResult(playlist, playlistItems) {
+	async function displayPlaylistResult(playlist, playlistItems) {
 		resultsList.innerHTML = '';
 		
 		// Show playlist header
@@ -1521,29 +1521,71 @@
 			loadPlaylist(playlist.id, false);
 		});
 
-		// Show individual videos from playlist
-		playlistItems.forEach(item => {
-			const videoId = item.snippet.resourceId.videoId;
-			const title = item.snippet.title;
-			const thumbnailUrl = item.snippet.thumbnails.default.url;
-
-			const li = document.createElement('li');
-			li.dataset.videoId = videoId;
-			li.innerHTML = `<img src="${thumbnailUrl}" alt="${title}"><div class="video-info"><div><div class="video-title" title="Play Now">${title}</div></div><button class="queue-btn">Add</button></div>`;
+		// Get all video IDs and fetch full details including duration
+		const videoIds = playlistItems.map(item => item.snippet.resourceId.videoId).join(',');
+		const searchYoutubeFunction = app.functions('us-central1').httpsCallable('searchYoutube');
+		
+		try {
+			const videoDetailsResult = await searchYoutubeFunction({ videoId: videoIds });
+			const videoDetails = videoDetailsResult.data.items || [];
 			
-			const clickableElements = [li.querySelector('img'), li.querySelector('.video-title')];
-			clickableElements.forEach(el => el.addEventListener('click', () => {
-				handleUserAction({ type: 'NEW_VIDEO', videoId: videoId, autoPlay: true });
-			}));
-
-			li.querySelector('.queue-btn').addEventListener('click', (e) => {
-				e.stopPropagation();
-				const videoData = { videoId, title, thumbnailUrl };
-				handleUserAction({ type: 'ADD_TO_QUEUE', video: videoData });
+			// Create a map of videoId to duration
+			const durationMap = {};
+			videoDetails.forEach(video => {
+				const duration = video.contentDetails ? formatDuration(video.contentDetails.duration) : '';
+				durationMap[video.id] = duration;
 			});
-			
-			resultsList.appendChild(li);
-		});
+
+			// Show individual videos from playlist with duration
+			playlistItems.forEach(item => {
+				const videoId = item.snippet.resourceId.videoId;
+				const title = item.snippet.title;
+				const thumbnailUrl = item.snippet.thumbnails.default.url;
+				const duration = durationMap[videoId] || '';
+
+				const li = document.createElement('li');
+				li.dataset.videoId = videoId;
+				li.innerHTML = `<img src="${thumbnailUrl}" alt="${title}"><div class="video-info"><div><div class="video-title" title="Play Now">${title}</div>${duration ? `<div class="video-duration">${duration}</div>` : ''}</div><button class="queue-btn">Add</button></div>`;
+				
+				const clickableElements = [li.querySelector('img'), li.querySelector('.video-title')];
+				clickableElements.forEach(el => el.addEventListener('click', () => {
+					handleUserAction({ type: 'NEW_VIDEO', videoId: videoId, autoPlay: true });
+				}));
+
+				li.querySelector('.queue-btn').addEventListener('click', (e) => {
+					e.stopPropagation();
+					const videoData = { videoId, title, thumbnailUrl, duration };
+					handleUserAction({ type: 'ADD_TO_QUEUE', video: videoData });
+				});
+				
+				resultsList.appendChild(li);
+			});
+		} catch (error) {
+			console.error('Error fetching video details for playlist:', error);
+			// Fallback: show videos without duration
+			playlistItems.forEach(item => {
+				const videoId = item.snippet.resourceId.videoId;
+				const title = item.snippet.title;
+				const thumbnailUrl = item.snippet.thumbnails.default.url;
+
+				const li = document.createElement('li');
+				li.dataset.videoId = videoId;
+				li.innerHTML = `<img src="${thumbnailUrl}" alt="${title}"><div class="video-info"><div><div class="video-title" title="Play Now">${title}</div></div><button class="queue-btn">Add</button></div>`;
+				
+				const clickableElements = [li.querySelector('img'), li.querySelector('.video-title')];
+				clickableElements.forEach(el => el.addEventListener('click', () => {
+					handleUserAction({ type: 'NEW_VIDEO', videoId: videoId, autoPlay: true });
+				}));
+
+				li.querySelector('.queue-btn').addEventListener('click', (e) => {
+					e.stopPropagation();
+					const videoData = { videoId, title, thumbnailUrl };
+					handleUserAction({ type: 'ADD_TO_QUEUE', video: videoData });
+				});
+				
+				resultsList.appendChild(li);
+			});
+		}
 	}
 
 	// Load playlist and either play first video or add all to queue
@@ -1560,30 +1602,48 @@
 				return;
 			}
 
+			// Get all video IDs from the playlist
+			const videoIds = playlistItems.map(item => item.snippet.resourceId.videoId).join(',');
+			
+			// Fetch full video details including duration
+			const videoDetailsResult = await searchYoutubeFunction({ videoId: videoIds });
+			const videoDetails = videoDetailsResult.data.items || [];
+			
+			// Create a map of videoId to duration
+			const durationMap = {};
+			videoDetails.forEach(video => {
+				const duration = video.contentDetails ? formatDuration(video.contentDetails.duration) : '';
+				durationMap[video.id] = duration;
+			});
+
 			if (playFirst) {
 				// Play the first video immediately
 				const firstVideo = playlistItems[0];
 				const firstVideoId = firstVideo.snippet.resourceId.videoId;
 				handleUserAction({ type: 'NEW_VIDEO', videoId: firstVideoId, autoPlay: true });
 				
-				// Add the rest to the queue
+				// Add the rest to the queue with duration
 				for (let i = 1; i < playlistItems.length; i++) {
 					const item = playlistItems[i];
+					const videoId = item.snippet.resourceId.videoId;
 					const videoData = {
-						videoId: item.snippet.resourceId.videoId,
+						videoId: videoId,
 						title: item.snippet.title,
-						thumbnailUrl: item.snippet.thumbnails.default.url
+						thumbnailUrl: item.snippet.thumbnails.default.url,
+						duration: durationMap[videoId] || ''
 					};
 					handleUserAction({ type: 'ADD_TO_QUEUE', video: videoData });
 				}
 				console.log(`Loaded playlist: playing first video, queued ${playlistItems.length - 1} more`);
 			} else {
-				// Add all videos to queue
+				// Add all videos to queue with duration
 				playlistItems.forEach(item => {
+					const videoId = item.snippet.resourceId.videoId;
 					const videoData = {
-						videoId: item.snippet.resourceId.videoId,
+						videoId: videoId,
 						title: item.snippet.title,
-						thumbnailUrl: item.snippet.thumbnails.default.url
+						thumbnailUrl: item.snippet.thumbnails.default.url,
+						duration: durationMap[videoId] || ''
 					};
 					handleUserAction({ type: 'ADD_TO_QUEUE', video: videoData });
 				});
