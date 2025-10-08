@@ -2596,9 +2596,16 @@ let guestTimePositions = {}; // Track guest positions for reverse sync
                     return;
                 }
                 
-                // If we're loading a new video, be more lenient with sync
-                if (loadingNewVideo) {
-                    console.log('[DATA] Applying state change during video loading:', data.state);
+                // If HOST is loading a new video (from guest adding it), ignore STATE_CHANGE messages
+                // The host should control its own playback state when loading guest-added videos
+                if (loadingNewVideo && isHost) {
+                    console.log('[HOST] Loading guest video, ignoring STATE_CHANGE from guest:', data.state);
+                    return;
+                }
+                
+                // If GUEST is loading a new video, be more lenient with sync
+                if (loadingNewVideo && !isHost) {
+                    console.log('[GUEST] Applying state change during video loading:', data.state);
                     lastPlayerState = data.state;
                     if (data.state === YT.PlayerState.PLAYING) {
                         player.playVideo();
