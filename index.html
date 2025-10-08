@@ -1084,6 +1084,27 @@
                     }
                 } else if (state === YT.PlayerState.PLAYING) {
                     console.log('[AD-DETECT] Video playing, stopping timer');
+                    
+                    // Check if there's a pending INITIAL_SYNC from host migration
+                    if (!isHost && window.pendingInitialSync) {
+                        console.log('[SYNC] Ad finished, applying pending INITIAL_SYNC from host migration');
+                        const pendingData = window.pendingInitialSync;
+                        delete window.pendingInitialSync;
+                        
+                        // Apply the pending sync
+                        setTimeout(() => {
+                            if (player.getVideoData()?.video_id === pendingData.videoId) {
+                                player.seekTo(pendingData.time, true);
+                                if (pendingData.state === YT.PlayerState.PLAYING) {
+                                    player.playVideo();
+                                } else if (pendingData.state === YT.PlayerState.PAUSED) {
+                                    player.pauseVideo();
+                                }
+                                console.log('[SYNC] Successfully applied pending sync after ad');
+                            }
+                        }, 500);
+                    }
+                    
                     // Stop timer when video is playing normally
                     clearInterval(adDetectionTimer);
                     adDetectionTimer = null;
@@ -1858,7 +1879,13 @@ let guestTimePositions = {}; // Track guest positions for reverse sync
     }
 
     function broadcastData(data) {
-
+        // If host is broadcasting, include ad status
+        if (isHost && player && (data.type === 'STATE_CHANGE' || data.type === 'TIME_UPDATE')) {
+            data.hostHasAd = isAdPlaying();
+            if (data.hostHasAd) {
+                console.log('[HOST-AD] Including ad status in broadcast');
+            }
+        }
         
         handleReceivedData(data, 'local');
         Object.entries(dataChannels).forEach(([id, channel]) => {
@@ -2133,61 +2160,12 @@ let guestTimePositions = {}; // Track guest positions for reverse sync
                 console.log('[SYNC] Ad detected during PLAYING state, skipping sync');
             }
         } else {
-            // For guests, be more selective about which state changes to send to host
+            // For guests, DON'T send automatic state changes to host
+            // Guests should only sync FROM the host, not TO the host
+            // The only exception is truly user-initiated actions (manual pause/play)
             if (!isHost) {
-                const currentTime = player.getCurrentTime();
-                
-                // Extra restrictive handling for ENDED states
-                if (state === YT.PlayerState.ENDED) {
-                    // Never send ENDED if there are videos in queue - host handles this
-                    if (videoQueue.length > 0) {
-                        console.log(`[GUEST] Suppressing ENDED state - queue has ${videoQueue.length} videos, letting host handle`);
-                        return;
-                    }
-                    
-                    // Don't send ENDED if we're ahead of expected time
-                    const expectedTime = getExpectedGuestTime();
-                    if (currentTime > expectedTime + 2) { // Even stricter tolerance for ENDED
-                        console.log(`[GUEST] Suppressing ENDED state - guest ahead (${currentTime.toFixed(1)}s vs expected ${expectedTime.toFixed(1)}s)`);
-                        return;
-                    }
-                    
-                    // Don't send ENDED if host is likely still playing (check recent sync)
-                    if (window.lastHostSyncTimestamp && Date.now() - window.lastHostSyncTimestamp < 5000) {
-                        const timeSinceLastSync = (Date.now() - window.lastHostSyncTimestamp) / 1000;
-                        const estimatedHostTime = window.lastHostSyncTime + timeSinceLastSync;
-                        const hostDuration = officialVideoDuration || player.getDuration();
-                        
-                        if (hostDuration > 0 && estimatedHostTime < hostDuration - 3) {
-                            console.log(`[GUEST] Suppressing ENDED state - host likely not finished (estimated host time: ${estimatedHostTime.toFixed(1)}s of ${hostDuration.toFixed(1)}s)`);
-                            return;
-                        }
-                    }
-                }
-                
-                // Don't send PAUSED states if the guest is ahead of where they should be
-                if (state === YT.PlayerState.PAUSED) {
-                    const expectedTime = getExpectedGuestTime();
-                    if (currentTime > expectedTime + 3) { // 3 second tolerance
-                        console.log(`[GUEST] Suppressing PAUSED state - guest ahead (${currentTime.toFixed(1)}s vs expected ${expectedTime.toFixed(1)}s)`);
-                        return; // Don't send this state change
-                    }
-                }
-                
-                // Don't send UNSTARTED states from guests (these are usually loading issues)
-                if (state === YT.PlayerState.UNSTARTED) {
-                    console.log('[GUEST] Suppressing UNSTARTED state - likely loading issue');
-                    return;
-                }
-                
-                // Only send PLAYING states if the guest isn't too far ahead
-                if (state === YT.PlayerState.PLAYING) {
-                    const expectedTime = getExpectedGuestTime();
-                    if (currentTime > expectedTime + 5) { // 5 second tolerance for play
-                        console.log(`[GUEST] Suppressing PLAYING state - guest too far ahead (${currentTime.toFixed(1)}s vs expected ${expectedTime.toFixed(1)}s)`);
-                        return;
-                    }
-                }
+                console.log(`[GUEST] Ignoring automatic state change (${YT_STATE[state]}) - guests sync FROM host only`);
+                return; // Don't send any automatic state changes from guests
             }
             
             const actionData = { type: 'STATE_CHANGE', state, time: player.getCurrentTime(), userInitiated: false };
@@ -2359,6 +2337,20 @@ let guestTimePositions = {}; // Track guest positions for reverse sync
                     console.log('[SYNC] Player not ready for INITIAL_SYNC, skipping');
                     return;
                 }
+                
+                // Check if guest currently has an ad playing
+                const guestHasAd = isAdPlaying();
+                if (guestHasAd) {
+                    console.log('[SYNC] Guest has ad during INITIAL_SYNC, deferring sync until ad finishes');
+                    // Store the sync data to apply after ad finishes
+                    window.pendingInitialSync = data;
+                    // Still update official duration and queue
+                    officialVideoDuration = data.duration;
+                    videoQueue = data.queue;
+                    updateQueueUI();
+                    return;
+                }
+                
                 isSyncingFromHost = true;
                 officialVideoDuration = data.duration;
                 if (player.getVideoData()?.video_id !== data.videoId) {
@@ -2440,6 +2432,12 @@ let guestTimePositions = {}; // Track guest positions for reverse sync
                 startAdDetectionTimer();
                 break;
             case 'STATE_CHANGE': {
+                // If host has an ad, guests should ignore sync
+                if (data.hostHasAd && !isHost) {
+                    console.log('[GUEST] Host has ad during STATE_CHANGE, ignoring sync');
+                    return;
+                }
+                
                 // Additional safety check
                 if (!player || typeof player.getCurrentTime !== 'function') {
                     console.log('[DATA] Player not ready for STATE_CHANGE, skipping');
@@ -2524,6 +2522,17 @@ let guestTimePositions = {}; // Track guest positions for reverse sync
                     return;
                 }
                 if (!isHost) {
+                    // If host has an ad, guests should ignore sync to avoid disruption
+                    if (data.hostHasAd) {
+                        console.log('[GUEST] Host has ad, ignoring sync to avoid disruption');
+                        // Still track the time for estimation purposes
+                        if (data.time !== undefined) {
+                            window.lastHostSyncTime = data.time;
+                            window.lastHostSyncTimestamp = Date.now();
+                        }
+                        return; // Don't sync when host has an ad
+                    }
+                    
                     // Track host sync time for guest position estimation
                     if (data.time !== undefined) {
                         window.lastHostSyncTime = data.time;
@@ -2800,7 +2809,21 @@ let guestTimePositions = {}; // Track guest positions for reverse sync
                     }
                 }
                 
-                const data = { type: 'TIME_UPDATE', time: hostTime, state: currentState };
+                // Check if host is playing an ad
+                const hostHasAd = isAdPlaying();
+                
+                const data = { 
+                    type: 'TIME_UPDATE', 
+                    time: hostTime, 
+                    state: currentState,
+                    hostHasAd: hostHasAd // Include ad status
+                };
+                
+                // Log when host has an ad
+                if (hostHasAd) {
+                    console.log('[HOST-AD] Host has ad, notifying guests to ignore sync');
+                }
+                
                 Object.entries(dataChannels).forEach(([id, channel]) => {
                     if (id !== 'host' && channel && channel.readyState === 'open') {
                         channel.send(JSON.stringify(data));
