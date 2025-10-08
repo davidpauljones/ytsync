@@ -649,6 +649,7 @@
     let intentToAutoPlay = false;
     let localUserList = {};
     let lastReverseSyncRequest = 0; // Track last time we requested guest positions
+    let guestReadyStates = {}; // Track which guests have correct duration loaded
     // Track the currently loaded videoId
     let currentVideoId = null;
 
@@ -1061,24 +1062,25 @@
                     
                     // Simple duration-based detection during non-initial loading
                     if (!isInitialLoading) {
-                        console.log(`[AD-DETECT] Checking during ${YT_STATE[state]} state`);
-                        console.log(`[AD-DETECT] Player details: duration=${duration}, time=${currentTime}, videoId=${videoData?.video_id}`);
-                        
-                        // Duration-based ad detection: if duration is 0 or very different from expected
-                        const durationMismatch = officialVideoDuration > 0 && (duration === 0 || Math.abs(duration - officialVideoDuration) > 30);
-                        
-                        if (durationMismatch) {
-                            console.log(`[AD-DETECT] Duration mismatch detected - expected: ${officialVideoDuration}s, got: ${duration}s`);
+                        // Only check for ads if we have an expected duration to compare against
+                        // If officialVideoDuration is 0, we're still loading, not seeing an ad
+                        if (officialVideoDuration > 0) {
+                            console.log(`[AD-DETECT] Checking during ${YT_STATE[state]} state`);
+                            console.log(`[AD-DETECT] Player details: duration=${duration}, time=${currentTime}, videoId=${videoData?.video_id}`);
                             
-                            if (isHost) {
-                                console.log('[SYNC] Host detected ad based on duration, avoiding sync broadcasts');
-                            } else {
-                                console.log(`[AD-DETECT] Guest detected ad based on duration, waiting for host sync`);
+                            // Duration-based ad detection: if duration is 0 or very different from expected
+                            const durationMismatch = duration === 0 || Math.abs(duration - officialVideoDuration) > 30;
+                            
+                            if (durationMismatch) {
+                                console.log(`[AD-DETECT] Duration mismatch detected - expected: ${officialVideoDuration}s, got: ${duration}s`);
+                                
+                                if (isHost) {
+                                    console.log('[SYNC] Host detected ad based on duration, avoiding sync broadcasts');
+                                } else {
+                                    console.log(`[AD-DETECT] Guest detected ad based on duration, waiting for host sync`);
+                                }
                             }
                         }
-                    } else {
-                        // During initial loading, just log minimal info
-                        console.log(`[AD-DETECT] Initial loading phase (${YT_STATE[state]}), allowing normal startup`);
                     }
                 } else if (state === YT.PlayerState.PLAYING) {
                     console.log('[AD-DETECT] Video playing, stopping timer');
@@ -1103,6 +1105,22 @@
                         }, 500);
                     }
                     
+                    // Host finished ad - request guest positions to sync forward if needed
+                    if (isHost && currentTime < 5 && duration > 0 && Math.abs(duration - officialVideoDuration) < 2) {
+                        console.log('[AD-RECOVERY] Host finished ad, requesting guest positions to catch up');
+                        const requestData = { type: 'REQUEST_POSITION' };
+                        Object.entries(dataChannels).forEach(([id, channel]) => {
+                            if (id !== 'host' && channel && channel.readyState === 'open') {
+                                channel.send(JSON.stringify(requestData));
+                            }
+                        });
+                    }
+                    
+                    // Guest finished ad - will naturally sync to host's next TIME_UPDATE
+                    if (!isHost && currentTime < 5) {
+                        console.log('[AD-RECOVERY] Guest finished ad, will sync to host on next update');
+                    }
+                    
                     // Stop timer when video is playing normally
                     clearInterval(adDetectionTimer);
                     adDetectionTimer = null;
@@ -1118,6 +1136,78 @@
                 console.log('[AD-DETECT] Timer cleared after 30 seconds');
             }
         }, 30000);
+    }
+    
+    // Check if all guests have loaded the video with correct duration, then auto-start
+    function checkAllGuestsReadyAndAutoStart() {
+        if (!isHost || !player) return;
+        
+        const hostDuration = player.getDuration();
+        const hostState = player.getPlayerState();
+        
+        // Only auto-start if host has loaded but hasn't started playing yet
+        if (hostDuration <= 0 || hostState === YT.PlayerState.PLAYING) {
+            return;
+        }
+        
+        const connectedGuests = Object.keys(dataChannels).filter(id => id !== 'host' && dataChannels[id]?.readyState === 'open');
+        
+        // If no guests, auto-start immediately
+        if (connectedGuests.length === 0) {
+            console.log('[AUTO-START] No guests connected, starting video');
+            player.playVideo();
+            return;
+        }
+        
+        // Check if host has an ad
+        const hostHasAd = isAdPlaying();
+        
+        if (hostHasAd) {
+            // Host has ad - check if any guest is ready without an ad
+            const guestsWithoutAds = connectedGuests.filter(guestId => {
+                const guestState = guestReadyStates[guestId];
+                return guestState && 
+                       !guestState.hasAd &&
+                       Math.abs(guestState.duration - officialVideoDuration) < 2 &&
+                       guestState.videoId === currentVideoId;
+            });
+            
+            if (guestsWithoutAds.length > 0) {
+                console.log('[AUTO-START] Host has ad but guests ready, guests will start playing');
+                // Broadcast start to guests without ads
+                broadcastData({ 
+                    type: 'STATE_CHANGE', 
+                    state: YT.PlayerState.PLAYING, 
+                    time: 0,
+                    hostHasAd: true // Let guests know host has ad
+                });
+                return;
+            } else {
+                console.log('[AUTO-START] Host and all guests have ads, waiting...');
+                return;
+            }
+        }
+        
+        // Host doesn't have ad - start playing if all guests without ads are ready
+        const guestsWithoutAds = connectedGuests.filter(guestId => {
+            const guestState = guestReadyStates[guestId];
+            return guestState && !guestState.hasAd;
+        });
+        
+        const allGuestsWithoutAdsReady = guestsWithoutAds.every(guestId => {
+            const guestState = guestReadyStates[guestId];
+            return guestState && 
+                   Math.abs(guestState.duration - officialVideoDuration) < 2 &&
+                   guestState.videoId === currentVideoId;
+        });
+        
+        // If all guests without ads are ready (or all guests have ads), start
+        if (guestsWithoutAds.length === 0 || allGuestsWithoutAdsReady) {
+            console.log('[AUTO-START] Host ready, starting video (guests with ads will catch up later)');
+            player.playVideo();
+            // Clear ready states for next video
+            guestReadyStates = {};
+        }
     }
     
     // Guest recovery timer for ad issues
@@ -2057,6 +2147,29 @@ let guestTimePositions = {}; // Track guest positions for reverse sync
                     console.log(`[DURATION] Capturing video duration from CUED state: ${duration}s`);
                     officialVideoDuration = duration;
                     broadcastData({ type: 'VIDEO_DURATION', duration: duration });
+                    
+                    // Check if all guests are ready and auto-start
+                    setTimeout(() => {
+                        checkAllGuestsReadyAndAutoStart();
+                    }, 1000); // Give guests a moment to report their ready state
+                }
+            }
+            
+            // Guest notifies host when video is loaded with correct duration
+            if (!isHost && player) {
+                const duration = player.getDuration();
+                if (duration > 0 && officialVideoDuration > 0 && Math.abs(duration - officialVideoDuration) < 2) {
+                    const guestHasAd = isAdPlaying();
+                    console.log(`[GUEST-READY] Video loaded with correct duration: ${duration}s, hasAd: ${guestHasAd}, notifying host`);
+                    const hostChannel = dataChannels['host'];
+                    if (hostChannel && hostChannel.readyState === 'open') {
+                        hostChannel.send(JSON.stringify({
+                            type: 'GUEST_READY',
+                            duration: duration,
+                            videoId: currentVideoId,
+                            hasAd: guestHasAd
+                        }));
+                    }
                 }
             }
         }
@@ -2110,10 +2223,17 @@ let guestTimePositions = {}; // Track guest positions for reverse sync
                 const currentDuration = player.getDuration();
                 const now = Date.now();
                 
+                // Check if this is a fresh video load (not an ad recovery)
+                const videoLoadTime = window.lastVideoLoadTime || 0;
+                const timeSinceLoad = now - videoLoadTime;
+                const isFreshLoad = timeSinceLoad < 15000; // Within 15 seconds of load
+                
                 // If host is playing from near the beginning (0-5 seconds) but has guests
                 // and the video has a reasonable duration, request guest positions
                 // Only do this once per video load (cooldown of 20 seconds)
-                if (currentTime < 5 && currentDuration > 30 && Object.keys(dataChannels).length > 0 &&
+                // Don't do this for fresh video loads (to avoid false positives)
+                if (!isFreshLoad && currentTime < 5 && currentDuration > 30 && 
+                    Object.keys(dataChannels).length > 0 &&
                     (now - lastReverseSyncRequest) > 20000) {
                     console.log('[REVERSE-SYNC] Host may have restarted from ad, requesting guest positions');
                     lastReverseSyncRequest = now;
@@ -2440,6 +2560,11 @@ let guestTimePositions = {}; // Track guest positions for reverse sync
                 loadingNewVideo = true;
                 officialVideoDuration = 0;
                 currentVideoId = data.videoId;
+                
+                // Clear guest ready states for new video
+                if (isHost) {
+                    guestReadyStates = {};
+                }
                 window.lastVideoLoadTime = Date.now(); // Track load time for ad detection
                 hideUpNextOverlay();
                 updateVideoTitle();
@@ -2685,6 +2810,20 @@ let guestTimePositions = {}; // Track guest positions for reverse sync
                         timestamp: Date.now()
                     };
                     console.log(`[REVERSE-SYNC] Received position from guest ${senderId}: ${data.time}`);
+                }
+                break;
+            case 'GUEST_READY':
+                // Guest notifies host that video is loaded with correct duration
+                if (isHost) {
+                    guestReadyStates[senderId] = {
+                        duration: data.duration,
+                        videoId: data.videoId,
+                        hasAd: data.hasAd || false,
+                        timestamp: Date.now()
+                    };
+                    console.log(`[GUEST-READY] Guest ${senderId} ready with duration: ${data.duration}s, hasAd: ${data.hasAd}`);
+                    // Check if all guests are ready and auto-start
+                    checkAllGuestsReadyAndAutoStart();
                 }
                 break;
             case 'ADD_TO_QUEUE':
