@@ -648,6 +648,7 @@
     let lastKeepaliveReceived = {}; // Track last keepalive from each peer
     let intentToAutoPlay = false;
     let localUserList = {};
+    let lastReverseSyncRequest = 0; // Track last time we requested guest positions
     // Track the currently loaded videoId
     let currentVideoId = null;
 
@@ -2084,11 +2085,15 @@ let guestTimePositions = {}; // Track guest positions for reverse sync
             if (isHost && player) {
                 const currentTime = player.getCurrentTime();
                 const currentDuration = player.getDuration();
+                const now = Date.now();
                 
                 // If host is playing from near the beginning (0-5 seconds) but has guests
                 // and the video has a reasonable duration, request guest positions
-                if (currentTime < 5 && currentDuration > 30 && Object.keys(dataChannels).length > 0) {
+                // Only do this once per video load (cooldown of 20 seconds)
+                if (currentTime < 5 && currentDuration > 30 && Object.keys(dataChannels).length > 0 &&
+                    (now - lastReverseSyncRequest) > 20000) {
                     console.log('[REVERSE-SYNC] Host may have restarted from ad, requesting guest positions');
+                    lastReverseSyncRequest = now;
                     
                     // Request current positions from all guests
                     const requestData = { type: 'REQUEST_POSITION' };
@@ -2249,16 +2254,33 @@ let guestTimePositions = {}; // Track guest positions for reverse sync
                 }
             }
             
-            // Don't honor guest pause requests if guest is significantly ahead
-            if (data.state === YT.PlayerState.PAUSED && guestTime > hostTime + 3) {
-                console.log(`[HOST] Ignoring guest PAUSED request - guest ahead (${guestTime.toFixed(1)}s vs host ${hostTime.toFixed(1)}s)`);
-                return; // Don't process this request
+            // Don't honor guest pause requests if guest is significantly ahead or behind
+            if (data.state === YT.PlayerState.PAUSED) {
+                if (guestTime > hostTime + 3) {
+                    console.log(`[HOST] Ignoring guest PAUSED request - guest ahead (${guestTime.toFixed(1)}s vs host ${hostTime.toFixed(1)}s)`);
+                    return;
+                }
+                // Also ignore pause from guests who are behind (likely ad-related)
+                if (hostState === YT.PlayerState.PLAYING && hostTime > guestTime + 10) {
+                    console.log(`[HOST] Ignoring guest PAUSED request - guest too far behind (${guestTime.toFixed(1)}s vs host ${hostTime.toFixed(1)}s)`);
+                    return;
+                }
             }
             
-            // Don't honor guest play requests if they're too far ahead
-            if (data.state === YT.PlayerState.PLAYING && guestTime > hostTime + 5) {
-                console.log(`[HOST] Ignoring guest PLAYING request - guest too far ahead (${guestTime.toFixed(1)}s vs host ${hostTime.toFixed(1)}s)`);
-                return; // Don't process this request
+            // Don't honor guest play requests if they're too far ahead OR too far behind
+            if (data.state === YT.PlayerState.PLAYING) {
+                // Guest is ahead
+                if (guestTime > hostTime + 5) {
+                    console.log(`[HOST] Ignoring guest PLAYING request - guest too far ahead (${guestTime.toFixed(1)}s vs host ${hostTime.toFixed(1)}s)`);
+                    return;
+                }
+                
+                // Guest is behind (likely just finished an ad while host is already playing)
+                // Only ignore if host is actually playing and significantly ahead
+                if (hostState === YT.PlayerState.PLAYING && hostTime > guestTime + 10) {
+                    console.log(`[HOST] Ignoring guest PLAYING request - guest too far behind after ad (${guestTime.toFixed(1)}s vs host ${hostTime.toFixed(1)}s)`);
+                    return;
+                }
             }
         }
         
