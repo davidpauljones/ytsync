@@ -2385,6 +2385,37 @@ let guestTimePositions = {}; // Track guest positions for reverse sync
                         console.log('[DATA] Video duration received but player not ready yet');
                     }
                 }
+                
+                // Chrome fix: Start watchdog timer to detect stuck buffering/unstarted state
+                if (!isHost && player && data.duration > 0) {
+                    // Clear any existing watchdog
+                    if (window.stuckPlayerWatchdog) {
+                        clearTimeout(window.stuckPlayerWatchdog);
+                    }
+                    
+                    window.stuckPlayerWatchdog = setTimeout(() => {
+                        const currentState = player.getPlayerState();
+                        const currentDuration = player.getDuration();
+                        
+                        // If player has correct duration but is stuck in UNSTARTED or BUFFERING
+                        if (currentDuration > 0 && Math.abs(currentDuration - data.duration) < 2 &&
+                            (currentState === YT.PlayerState.UNSTARTED || currentState === YT.PlayerState.BUFFERING)) {
+                            console.warn('[STUCK-FIX] Video loaded with correct duration but stuck in state:', YT_STATE[currentState]);
+                            console.warn('[STUCK-FIX] Forcing playback to unstick player');
+                            
+                            // Force the video to play
+                            player.playVideo();
+                            
+                            // If we have recent host sync data, seek to it
+                            if (window.lastHostSyncTime !== undefined && window.lastHostSyncTimestamp) {
+                                const timeSinceSync = (Date.now() - window.lastHostSyncTimestamp) / 1000;
+                                const estimatedHostTime = window.lastHostSyncTime + timeSinceSync;
+                                console.log('[STUCK-FIX] Seeking to estimated host position:', estimatedHostTime.toFixed(1));
+                                player.seekTo(estimatedHostTime, true);
+                            }
+                        }
+                    }, 5000); // Wait 5 seconds to see if it unsticks naturally
+                }
                 break;
             case 'NEW_VIDEO':
                 // Additional safety check
@@ -2553,6 +2584,18 @@ let guestTimePositions = {}; // Track guest positions for reverse sync
                     const localState = player.getPlayerState();
                     const timeDifference = Math.abs(localTime - data.time);
                     
+                    // Chrome fix: Force play if stuck in BUFFERING with correct duration
+                    if (data.state === YT.PlayerState.PLAYING && localState === YT.PlayerState.BUFFERING) {
+                        const currentDuration = player.getDuration();
+                        // If we have correct duration and host is playing, force play
+                        if (currentDuration > 0 && Math.abs(currentDuration - officialVideoDuration) < 2) {
+                            console.warn('[STUCK-FIX] Player stuck buffering with correct duration, forcing play');
+                            player.seekTo(data.time, true);
+                            player.playVideo();
+                            break;
+                        }
+                    }
+                    
                     if (data.state === YT.PlayerState.PLAYING && (localState !== YT.PlayerState.PLAYING || timeDifference > 3.5)) {
                         const currentDuration = player.getDuration();
                         if (officialVideoDuration > 0 && Math.abs(currentDuration - officialVideoDuration) > 2) {
@@ -2562,6 +2605,16 @@ let guestTimePositions = {}; // Track guest positions for reverse sync
                         
                         // Only sync if we're not in UNSTARTED state, unless we're actively loading
                         if (localState === YT.PlayerState.UNSTARTED) {
+                            const currentDuration = player.getDuration();
+                            
+                            // Chrome fix: If video is loaded (has duration) but stuck in UNSTARTED, force it
+                            if (currentDuration > 0 && Math.abs(currentDuration - officialVideoDuration) < 2) {
+                                console.warn('[STUCK-FIX] Video loaded but stuck in UNSTARTED, forcing play');
+                                player.seekTo(data.time, true);
+                                player.playVideo();
+                                break;
+                            }
+                            
                             // For guests, just wait for natural sync resolution
                             if (!isHost) {
                                 console.log('[GUEST] UNSTARTED state during sync - waiting for natural resolution');
@@ -2575,6 +2628,10 @@ let guestTimePositions = {}; // Track guest positions for reverse sync
                                 setTimeout(() => {
                                     if (player.getPlayerState() !== YT.PlayerState.UNSTARTED) {
                                         player.seekTo(data.time, true);
+                                        player.playVideo();
+                                    } else {
+                                        // Still stuck, try forcing it
+                                        console.warn('[STUCK-FIX] Still stuck after retry, forcing play');
                                         player.playVideo();
                                     }
                                 }, 1000);
