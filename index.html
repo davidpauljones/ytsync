@@ -169,6 +169,15 @@
         .video-info { flex-grow: 1; display: flex; justify-content: space-between; align-items: center; gap: 8px; min-width: 0; }
         .video-title { font-weight: 500; color: var(--primary-text); white-space: normal; overflow: hidden; text-overflow: ellipsis; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
         .video-duration { font-size: 12px; color: var(--secondary-text); margin-top: 4px; }
+        .playlist-item { border-left: 3px solid #ff0000; }
+        .playlist-header { padding: 12px; background-color: var(--hover-background); border-radius: 8px; margin-bottom: 8px; }
+        .playlist-header h3 { margin: 0 0 4px 0; font-size: 16px; color: var(--primary-text); }
+        .playlist-header p { margin: 0 0 8px 0; font-size: 13px; color: var(--secondary-text); }
+        .playlist-actions { display: flex; gap: 8px; }
+        .play-all-btn, .queue-all-btn { padding: 8px 16px; font-size: 13px; background-color: #ff0000; color: white; border: none; border-radius: 4px; cursor: pointer; font-weight: 500; }
+        .queue-all-btn { background-color: transparent; color: var(--primary-text); border: 1px solid var(--border-color); }
+        .play-all-btn:hover { background-color: #cc0000; }
+        .queue-all-btn:hover { background-color: var(--hover-background); }
         .queue-btn, .remove-btn { padding: 6px 12px; font-size: 12px; flex-shrink: 0; background-color: var(--hover-background); color: var(--primary-text); border: 1px solid var(--border-color); border-radius: 18px; cursor: pointer; }
         body.dark .queue-btn, body.dark .remove-btn { background-color: var(--yt-light-dark); }
         .user-modal { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background-color: rgba(0,0,0,0.7); display: flex; align-items: center; justify-content: center; z-index: 1000; }
@@ -1381,65 +1390,209 @@
 		const query = searchInput.value;
 		if (!query) return;
 
-		// This regular expression checks for various YouTube URL formats and extracts the video ID.
-		const youtubeUrlRegex = /(?:https?:\/\/)?(?:www\.)?(?:youtube\.com\/(?:watch\?v=|embed\/)|youtu\.be\/)([\w-]{11})/;
-		const match = query.match(youtubeUrlRegex);
+		// Regular expressions for YouTube URLs
+		const youtubeVideoRegex = /(?:https?:\/\/)?(?:www\.)?(?:youtube\.com\/(?:watch\?v=|embed\/)|youtu\.be\/)([\w-]{11})/;
+		const youtubePlaylistRegex = /(?:https?:\/\/)?(?:www\.)?youtube\.com\/.*[?&]list=([\w-]+)/;
+		
+		const videoMatch = query.match(youtubeVideoRegex);
+		const playlistMatch = query.match(youtubePlaylistRegex);
 		
 		let payload = {};
-		if (match) {
-			// If it's a URL, the payload will contain the video ID.
-			const videoId = match[1];
+		if (playlistMatch) {
+			// If it's a playlist URL, fetch the playlist
+			const playlistId = playlistMatch[1];
+			payload = { playlistId: playlistId };
+			console.log("YouTube Playlist URL detected. Fetching playlist:", playlistId);
+		} else if (videoMatch) {
+			// If it's a video URL, fetch the video
+			const videoId = videoMatch[1];
 			payload = { videoId: videoId };
-			console.log("YouTube URL detected. Fetching by video ID:", videoId);
+			console.log("YouTube Video URL detected. Fetching by video ID:", videoId);
 		} else {
-			// Otherwise, it's a regular search query.
-			payload = { query: query };
+			// Otherwise, it's a regular search query - search for both videos and playlists
+			payload = { query: query, searchType: 'video,playlist' };
 			console.log("Performing keyword search for:", query);
 		}
 
 		const searchYoutubeFunction = app.functions('us-central1').httpsCallable('searchYoutube');
 		try {
 			const result = await searchYoutubeFunction(payload);
-			displayResults(result.data.items || []);
+			
+			// Handle playlist response differently
+			if (result.data.playlist) {
+				// Single playlist with its items
+				displayPlaylistResult(result.data.playlist, result.data.items);
+			} else {
+				// Mixed search results (videos and/or playlists)
+				displayResults(result.data.items || []);
+			}
 		} catch (error) {
 			console.error("Error calling Cloud Function:", error);
 			alert("Could not fetch results. Check the console for details.");
 		}
 	}
 
-    function displayResults(videos) {
-		resultsList.innerHTML = videos.length ? '' : '<li>No videos found.</li>';
-		videos.forEach(video => {
-			// --- THIS IS THE FIX ---
-			// The video ID is in a different place depending on the API call.
-			// If video.id is an object, it's a search result. If not, it's a direct lookup.
-			const videoId = (typeof video.id === 'object') ? video.id.videoId : video.id;
+    function displayResults(items) {
+		resultsList.innerHTML = items.length ? '' : '<li>No results found.</li>';
+		items.forEach(item => {
+			// Check if this is a video or playlist
+			const isPlaylist = item.kind === 'youtube#playlist';
+			
+			if (isPlaylist) {
+				// Display playlist
+				const playlistId = item.id;
+				const title = item.snippet.title;
+				const thumbnailUrl = item.snippet.thumbnails.default.url;
+				const videoCount = item.contentDetails ? item.contentDetails.itemCount : 0;
 
-			const title = video.snippet.title;
-			const thumbnailUrl = video.snippet.thumbnails.default.url;
-			const duration = video.contentDetails ? formatDuration(video.contentDetails.duration) : '';
+				const li = document.createElement('li');
+				li.dataset.playlistId = playlistId;
+				li.classList.add('playlist-item');
+				li.innerHTML = `<img src="${thumbnailUrl}" alt="${title}"><div class="video-info"><div><div class="video-title" title="Load Playlist">${title}</div><div class="video-duration">📋 ${videoCount} videos</div></div><button class="queue-btn">Queue All</button></div>`;
+				
+				const clickableElements = [li.querySelector('img'), li.querySelector('.video-title')];
+				clickableElements.forEach(el => el.addEventListener('click', () => {
+					if (playlistId) {
+						loadPlaylist(playlistId, true); // true = play first video immediately
+					}
+				}));
+
+				li.querySelector('.queue-btn').addEventListener('click', (e) => {
+					e.stopPropagation();
+					if (playlistId) {
+						loadPlaylist(playlistId, false); // false = add all to queue
+					}
+				});
+				
+				resultsList.appendChild(li);
+			} else {
+				// Display video
+				const videoId = (typeof item.id === 'object') ? item.id.videoId : item.id;
+				const title = item.snippet.title;
+				const thumbnailUrl = item.snippet.thumbnails.default.url;
+				const duration = item.contentDetails ? formatDuration(item.contentDetails.duration) : '';
+
+				const li = document.createElement('li');
+				li.dataset.videoId = videoId;
+				li.innerHTML = `<img src="${thumbnailUrl}" alt="${title}"><div class="video-info"><div><div class="video-title" title="Play Now">${title}</div>${duration ? `<div class="video-duration">${duration}</div>` : ''}</div><button class="queue-btn">Add</button></div>`;
+				
+				const clickableElements = [li.querySelector('img'), li.querySelector('.video-title')];
+				clickableElements.forEach(el => el.addEventListener('click', () => {
+					if (videoId) {
+						handleUserAction({ type: 'NEW_VIDEO', videoId: videoId, autoPlay: true });
+					}
+				}));
+
+				li.querySelector('.queue-btn').addEventListener('click', (e) => {
+					e.stopPropagation();
+					if (videoId) {
+						const videoData = { videoId, title, thumbnailUrl, duration };
+						handleUserAction({ type: 'ADD_TO_QUEUE', video: videoData });
+					}
+				});
+				
+				resultsList.appendChild(li);
+			}
+		});
+	}
+
+	// Display a single playlist URL result with its videos
+	function displayPlaylistResult(playlist, playlistItems) {
+		resultsList.innerHTML = '';
+		
+		// Show playlist header
+		const playlistHeader = document.createElement('div');
+		playlistHeader.className = 'playlist-header';
+		playlistHeader.innerHTML = `
+			<h3>${playlist.snippet.title}</h3>
+			<p>${playlist.contentDetails.itemCount} videos</p>
+			<div class="playlist-actions">
+				<button class="play-all-btn">▶ Play All</button>
+				<button class="queue-all-btn">+ Queue All</button>
+			</div>
+		`;
+		resultsList.appendChild(playlistHeader);
+
+		playlistHeader.querySelector('.play-all-btn').addEventListener('click', () => {
+			loadPlaylist(playlist.id, true);
+		});
+		
+		playlistHeader.querySelector('.queue-all-btn').addEventListener('click', () => {
+			loadPlaylist(playlist.id, false);
+		});
+
+		// Show individual videos from playlist
+		playlistItems.forEach(item => {
+			const videoId = item.snippet.resourceId.videoId;
+			const title = item.snippet.title;
+			const thumbnailUrl = item.snippet.thumbnails.default.url;
 
 			const li = document.createElement('li');
 			li.dataset.videoId = videoId;
-			li.innerHTML = `<img src="${thumbnailUrl}" alt="${video.title}"><div class="video-info"><div><div class="video-title" title="Play Now">${title}</div>${duration ? `<div class="video-duration">${duration}</div>` : ''}</div><button class="queue-btn">Add</button></div>`;
+			li.innerHTML = `<img src="${thumbnailUrl}" alt="${title}"><div class="video-info"><div><div class="video-title" title="Play Now">${title}</div></div><button class="queue-btn">Add</button></div>`;
 			
 			const clickableElements = [li.querySelector('img'), li.querySelector('.video-title')];
 			clickableElements.forEach(el => el.addEventListener('click', () => {
-				if (videoId) { // Ensure we have a valid videoId before trying to play
-					handleUserAction({ type: 'NEW_VIDEO', videoId: videoId, autoPlay: true });
-				}
+				handleUserAction({ type: 'NEW_VIDEO', videoId: videoId, autoPlay: true });
 			}));
 
 			li.querySelector('.queue-btn').addEventListener('click', (e) => {
 				e.stopPropagation();
-				if (videoId) { // Ensure we have a valid videoId before queuing
-					const videoData = { videoId, title, thumbnailUrl, duration };
-					handleUserAction({ type: 'ADD_TO_QUEUE', video: videoData });
-				}
+				const videoData = { videoId, title, thumbnailUrl };
+				handleUserAction({ type: 'ADD_TO_QUEUE', video: videoData });
 			});
 			
 			resultsList.appendChild(li);
 		});
+	}
+
+	// Load playlist and either play first video or add all to queue
+	async function loadPlaylist(playlistId, playFirst) {
+		console.log('Loading playlist:', playlistId, 'playFirst:', playFirst);
+		
+		const searchYoutubeFunction = app.functions('us-central1').httpsCallable('searchYoutube');
+		try {
+			const result = await searchYoutubeFunction({ playlistId: playlistId });
+			const playlistItems = result.data.items || [];
+			
+			if (playlistItems.length === 0) {
+				alert('This playlist is empty or unavailable.');
+				return;
+			}
+
+			if (playFirst) {
+				// Play the first video immediately
+				const firstVideo = playlistItems[0];
+				const firstVideoId = firstVideo.snippet.resourceId.videoId;
+				handleUserAction({ type: 'NEW_VIDEO', videoId: firstVideoId, autoPlay: true });
+				
+				// Add the rest to the queue
+				for (let i = 1; i < playlistItems.length; i++) {
+					const item = playlistItems[i];
+					const videoData = {
+						videoId: item.snippet.resourceId.videoId,
+						title: item.snippet.title,
+						thumbnailUrl: item.snippet.thumbnails.default.url
+					};
+					handleUserAction({ type: 'ADD_TO_QUEUE', video: videoData });
+				}
+				console.log(`Loaded playlist: playing first video, queued ${playlistItems.length - 1} more`);
+			} else {
+				// Add all videos to queue
+				playlistItems.forEach(item => {
+					const videoData = {
+						videoId: item.snippet.resourceId.videoId,
+						title: item.snippet.title,
+						thumbnailUrl: item.snippet.thumbnails.default.url
+					};
+					handleUserAction({ type: 'ADD_TO_QUEUE', video: videoData });
+				});
+				console.log(`Added ${playlistItems.length} videos from playlist to queue`);
+			}
+		} catch (error) {
+			console.error('Error loading playlist:', error);
+			alert('Could not load playlist. Check the console for details.');
+		}
 	}
 
     // --- WEBRTC & FIREBASE SIGNALING ---
