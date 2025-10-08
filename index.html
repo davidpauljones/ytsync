@@ -1238,24 +1238,6 @@
             });
         }
     }
-    
-    // Skip to next video function
-    function skipToNextVideo() {
-        if (videoQueue.length === 0) {
-            console.log('[SKIP] No videos in queue to skip to');
-            return;
-        }
-        
-        console.log('[SKIP] Manually skipping to next video in queue');
-        const nextVideo = videoQueue.shift();
-        updateQueueDisplay();
-        handleUserAction({ type: 'NEW_VIDEO', videoId: nextVideo.videoId, autoPlay: true });
-    }
-    
-    // Update skip button state based on queue
-    function updateSkipButtonState() {
-        skipVideoBtn.disabled = videoQueue.length === 0;
-    }
 
     searchButton.addEventListener('click', searchYouTube);
     searchInput.addEventListener('keypress', e => e.key === 'Enter' && searchYouTube());
@@ -2646,7 +2628,7 @@ let guestTimePositions = {}; // Track guest positions for reverse sync
                 }
                 break;
             case 'REMOVE_FROM_QUEUE':
-                if (isHost) {
+                if (isHost && data.index >= 0 && data.index < videoQueue.length) {
                     videoQueue.splice(data.index, 1);
                     const queueUpdateData = { type: 'QUEUE_UPDATE', queue: videoQueue };
                     Object.entries(dataChannels).forEach(([id, channel]) => {
@@ -2655,6 +2637,8 @@ let guestTimePositions = {}; // Track guest positions for reverse sync
                         }
                     });
                     updateQueueUI(); // Update host's own queue UI
+                } else if (isHost) {
+                    console.warn('[QUEUE] Invalid index for REMOVE_FROM_QUEUE:', data.index);
                 }
                 break;
             case 'USER_LEAVING':
