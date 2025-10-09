@@ -202,6 +202,17 @@
         .invite-row { display: flex; gap: 8px; margin-top: 8px; align-items: center; }
         .invite-row #inviteLink { width: auto; flex: 1; min-width: 0; }
         .invite-row button { padding: 8px 12px; }
+        .control-section { margin: 16px 0; padding: 12px; background-color: var(--hover-background); border-radius: 8px; }
+        .toggle-label { display: flex; justify-content: space-between; align-items: center; cursor: pointer; user-select: none; }
+        .toggle-text { font-size: 14px; font-weight: 500; color: var(--primary-text); }
+        .toggle-switch { position: relative; width: 48px; height: 24px; }
+        .toggle-switch input { opacity: 0; width: 0; height: 0; }
+        .toggle-slider { position: absolute; cursor: pointer; top: 0; left: 0; right: 0; bottom: 0; background-color: #ccc; border-radius: 24px; transition: 0.3s; }
+        .toggle-slider:before { position: absolute; content: ""; height: 18px; width: 18px; left: 3px; bottom: 3px; background-color: white; border-radius: 50%; transition: 0.3s; }
+        .toggle-switch input:checked + .toggle-slider { background-color: #2196F3; }
+        .toggle-switch input:checked + .toggle-slider:before { transform: translateX(24px); }
+        body.dark .toggle-slider { background-color: #555; }
+        body.dark .toggle-switch input:checked + .toggle-slider { background-color: #2196F3; }
         #userList { list-style-type: none; padding-left: 0; }
         #userList li { background-color: var(--primary-background); padding: 8px 12px; border-radius: 4px; margin-bottom: 5px; }
         .status { text-align: center; font-weight: bold; padding: 12px; border-radius: 6px; margin-top: 10px; }
@@ -532,6 +543,18 @@
                         <button id="copyInviteBtn" aria-label="Copy invite link" title="Copy to clipboard">Copy</button>
                     </div>
                 </div>
+                
+                <!-- Guest Queue Control Toggle (Host Only) -->
+                <div id="guestControlSection" class="control-section hidden">
+                    <label class="toggle-label">
+                        <span class="toggle-text">Guest Queue Control</span>
+                        <div class="toggle-switch">
+                            <input type="checkbox" id="guestQueueControlToggle" checked>
+                            <span class="toggle-slider"></span>
+                        </div>
+                    </label>
+                </div>
+                
                 <h3>Connected Users</h3>
                 <ul id="userList"></ul>
                 <div id="connectionStatus" class="status disconnected">Status: Disconnected</div>
@@ -607,12 +630,15 @@
     const copyInviteBtn = document.getElementById('copyInviteBtn');
     const userList = document.getElementById('userList');
     const videoTitleElement = document.getElementById('videoTitle');
+    const guestControlSection = document.getElementById('guestControlSection');
+    const guestQueueControlToggle = document.getElementById('guestQueueControlToggle');
 
     // --- APP STATE ---
     let myName = '';
     let player;
     let isHost = false;
     let partyId = '';
+    let guestQueueControlEnabled = true; // Default: guests can control queue
     let myAuthId = null; 
     let currentHostId = '';
     const peerConnections = {};
@@ -864,7 +890,23 @@
             isHost = true;
             startHostHeartbeat();
             updateSkipButtonState(); // Update button states for host
+            showGuestControlToggle(); // Show toggle for host
         }
+        
+        // Guest queue control toggle event listener
+        guestQueueControlToggle.addEventListener('change', (e) => {
+            guestQueueControlEnabled = e.target.checked;
+            console.log('[GUEST-CONTROL] Guest queue control:', guestQueueControlEnabled ? 'ENABLED' : 'DISABLED');
+            
+            // Broadcast the setting to all guests
+            const controlData = { type: 'GUEST_CONTROL_UPDATE', enabled: guestQueueControlEnabled };
+            Object.entries(dataChannels).forEach(([id, channel]) => {
+                if (id !== 'host' && channel && channel.readyState === 'open') {
+                    channel.send(JSON.stringify(controlData));
+                }
+            });
+        });
+        
         // Enhanced leaving detection - multiple methods for reliability
         const sendLeavingMessage = () => {
             const data = { type: 'USER_LEAVING' };
@@ -1350,6 +1392,17 @@
             return `${minutes}:${seconds.toString().padStart(2, '0')}`;
         }
     }
+    
+    // Show guest control toggle for host
+    function showGuestControlToggle() {
+        guestControlSection.classList.remove('hidden');
+    }
+    
+    // Check if guest has queue control permission
+    function canGuestControlQueue() {
+        if (isHost) return true; // Host always has control
+        return guestQueueControlEnabled; // Guest permission based on toggle
+    }
 
     searchButton.addEventListener('click', searchYouTube);
     searchInput.addEventListener('keypress', e => e.key === 'Enter' && searchYouTube());
@@ -1498,6 +1551,11 @@
 				resultsList.appendChild(li);
 			}
 		});
+		
+		// Update guest UI permissions if guest
+		if (!isHost) {
+			updateGuestUIPermissions();
+		}
 	}
 
 	// Display a single playlist URL result with its videos
@@ -1699,6 +1757,7 @@
         partyId = crypto.randomUUID();
         currentHostId = myAuthId;
         updateSkipButtonState(); // Update button states for host
+        showGuestControlToggle(); // Show guest control toggle
         const url = `${window.location.href.split('?')[0]}?party=${partyId}`;
         inviteLinkInput.value = url;
         // Show inline row with copy button
@@ -2123,6 +2182,15 @@ let guestTimePositions = {}; // Track guest positions for reverse sync
 
     function handleUserAction(data) {
         
+        // Permission check for guests trying to control queue
+        if (!isHost && !canGuestControlQueue()) {
+            const restrictedActions = ['NEW_VIDEO', 'PLAY_FROM_QUEUE', 'REMOVE_FROM_QUEUE', 'SKIP_VIDEO'];
+            if (restrictedActions.includes(data.type)) {
+                console.log(`[PERMISSION] Guest queue control disabled. Action "${data.type}" blocked.`);
+                return; // Block the action
+            }
+        }
+        
         // If guest is loading a NEW_VIDEO, load it locally first to prevent sync conflicts
         if (!isHost && data.type === 'NEW_VIDEO') {
             console.log('[DATA] Guest loading video locally first:', data.videoId);
@@ -2247,6 +2315,10 @@ let guestTimePositions = {}; // Track guest positions for reverse sync
                 });
                 broadcastData({ type: 'USER_LIST', users });
                 channel.send(JSON.stringify({ type: 'HOST_INFO', hostId: myAuthId }));
+                
+                // Send guest control permission state to new guest
+                channel.send(JSON.stringify({ type: 'GUEST_CONTROL_UPDATE', enabled: guestQueueControlEnabled }));
+                
                 if (player && player.getPlayerState && player.getPlayerState() !== YT.PlayerState.UNSTARTED && player.getVideoData().video_id) {
                     const syncData = { type: 'INITIAL_SYNC', videoId: player.getVideoData().video_id, time: player.getCurrentTime(), state: player.getPlayerState(), duration: player.getDuration(), queue: videoQueue };
                     channel.send(JSON.stringify(syncData));
@@ -3147,6 +3219,50 @@ let guestTimePositions = {}; // Track guest positions for reverse sync
             case 'USER_LIST':
                 updateUserList(data.users);
                 break;
+            case 'GUEST_CONTROL_UPDATE':
+                // Guest receives permission update from host
+                if (!isHost) {
+                    guestQueueControlEnabled = data.enabled;
+                    console.log('[PERMISSION] Guest queue control:', guestQueueControlEnabled ? 'ENABLED' : 'DISABLED');
+                    updateGuestUIPermissions();
+                }
+                break;
+        }
+    }
+    
+    // Update UI elements based on guest permissions
+    function updateGuestUIPermissions() {
+        if (isHost) return; // Host always has full control
+        
+        // Update skip button
+        skipVideoBtn.disabled = !guestQueueControlEnabled || videoQueue.length === 0;
+        
+        // Add/remove disabled styling to search results and queue items
+        const searchItems = document.querySelectorAll('#results li');
+        const queueItems = document.querySelectorAll('#queueList li');
+        
+        if (!guestQueueControlEnabled) {
+            searchItems.forEach(item => {
+                item.style.opacity = '0.6';
+                item.style.cursor = 'not-allowed';
+                item.title = 'Queue control disabled by host';
+            });
+            queueItems.forEach(item => {
+                item.style.opacity = '0.6';
+                item.style.cursor = 'not-allowed';
+                item.title = 'Queue control disabled by host';
+            });
+        } else {
+            searchItems.forEach(item => {
+                item.style.opacity = '1';
+                item.style.cursor = 'pointer';
+                item.title = '';
+            });
+            queueItems.forEach(item => {
+                item.style.opacity = '1';
+                item.style.cursor = 'pointer';
+                item.title = 'Click to Play Now';
+            });
         }
     }
 
@@ -3618,6 +3734,7 @@ let guestTimePositions = {}; // Track guest positions for reverse sync
             // Update UI
             updateUIForNewHost();
             updateSkipButtonState(); // Update button states for new host
+            showGuestControlToggle(); // Show guest control toggle for new host
             
             // Start host functionality
             listenForGuests();
@@ -3811,6 +3928,11 @@ let guestTimePositions = {}; // Track guest positions for reverse sync
         
         // Update skip button state
         updateSkipButtonState();
+        
+        // Update guest UI permissions if guest
+        if (!isHost) {
+            updateGuestUIPermissions();
+        }
     }
 
     function updateConnectionStatus() {
