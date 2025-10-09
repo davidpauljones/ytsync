@@ -1543,8 +1543,16 @@
 			// Show individual videos from playlist with duration
 			playlistItems.forEach(item => {
 				const videoId = item.snippet.resourceId.videoId;
-				const title = item.snippet.title;
-				const thumbnailUrl = item.snippet.thumbnails.default.url;
+				const title = item.snippet.title || 'Untitled Video';
+				
+				// Safe thumbnail extraction with fallback
+				let thumbnailUrl = '';
+				if (item.snippet.thumbnails) {
+					thumbnailUrl = item.snippet.thumbnails.default?.url || 
+					              item.snippet.thumbnails.medium?.url || 
+					              item.snippet.thumbnails.high?.url || '';
+				}
+				
 				const duration = durationMap[videoId] || '';
 
 				const li = document.createElement('li');
@@ -1569,8 +1577,15 @@
 			// Fallback: show videos without duration
 			playlistItems.forEach(item => {
 				const videoId = item.snippet.resourceId.videoId;
-				const title = item.snippet.title;
-				const thumbnailUrl = item.snippet.thumbnails.default.url;
+				const title = item.snippet.title || 'Untitled Video';
+				
+				// Safe thumbnail extraction with fallback
+				let thumbnailUrl = '';
+				if (item.snippet.thumbnails) {
+					thumbnailUrl = item.snippet.thumbnails.default?.url || 
+					              item.snippet.thumbnails.medium?.url || 
+					              item.snippet.thumbnails.high?.url || '';
+				}
 
 				const li = document.createElement('li');
 				li.dataset.videoId = videoId;
@@ -1630,10 +1645,19 @@
 				for (let i = 1; i < playlistItems.length; i++) {
 					const item = playlistItems[i];
 					const videoId = item.snippet.resourceId.videoId;
+					
+					// Safe thumbnail extraction with fallback
+					let thumbnailUrl = '';
+					if (item.snippet.thumbnails) {
+						thumbnailUrl = item.snippet.thumbnails.default?.url || 
+						              item.snippet.thumbnails.medium?.url || 
+						              item.snippet.thumbnails.high?.url || '';
+					}
+					
 					const videoData = {
 						videoId: videoId,
-						title: item.snippet.title,
-						thumbnailUrl: item.snippet.thumbnails.default.url,
+						title: item.snippet.title || 'Untitled Video',
+						thumbnailUrl: thumbnailUrl,
 						duration: durationMap[videoId] || ''
 					};
 					handleUserAction({ type: 'ADD_TO_QUEUE', video: videoData });
@@ -1643,10 +1667,19 @@
 				// Add all videos to queue with duration
 				playlistItems.forEach(item => {
 					const videoId = item.snippet.resourceId.videoId;
+					
+					// Safe thumbnail extraction with fallback
+					let thumbnailUrl = '';
+					if (item.snippet.thumbnails) {
+						thumbnailUrl = item.snippet.thumbnails.default?.url || 
+						              item.snippet.thumbnails.medium?.url || 
+						              item.snippet.thumbnails.high?.url || '';
+					}
+					
 					const videoData = {
 						videoId: videoId,
-						title: item.snippet.title,
-						thumbnailUrl: item.snippet.thumbnails.default.url,
+						title: item.snippet.title || 'Untitled Video',
+						thumbnailUrl: thumbnailUrl,
 						duration: durationMap[videoId] || ''
 					};
 					handleUserAction({ type: 'ADD_TO_QUEUE', video: videoData });
