@@ -168,6 +168,11 @@
         .video-info { flex-grow: 1; display: flex; justify-content: space-between; align-items: center; gap: 8px; min-width: 0; }
         .video-title { font-weight: 500; color: var(--primary-text); white-space: normal; overflow: hidden; text-overflow: ellipsis; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
         .video-duration { font-size: 12px; color: var(--secondary-text); margin-top: 4px; }
+        .shuffle-btn { width: 100%; margin-bottom: 12px; padding: 8px 16px; font-size: 13px; background-color: var(--hover-background); color: var(--primary-text); border: 1px solid var(--border-color); border-radius: 8px; cursor: pointer; transition: background-color 0.2s; }
+        .shuffle-btn:hover:not(:disabled) { background-color: var(--yt-light-dark); }
+        .shuffle-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+        body.dark .shuffle-btn { background-color: var(--yt-light-dark); }
+        body.dark .shuffle-btn:hover:not(:disabled) { background-color: #3a3a3a; }
         .playlist-item { border-left: 3px solid #ff0000; }
         .playlist-header { padding: 12px; background-color: var(--hover-background); border-radius: 8px; margin-bottom: 8px; }
         .playlist-header h3 { margin: 0 0 4px 0; font-size: 16px; color: var(--primary-text); }
@@ -513,6 +518,7 @@
             
             <div class="sidebar-section">
                 <h2>Queue</h2>
+                <button id="shuffleQueueBtn" class="shuffle-btn" title="Shuffle queue order">🔀 Shuffle Queue</button>
                 <ul id="queueList"></ul>
             </div>
 
@@ -593,6 +599,7 @@
     const resultsList = document.getElementById('results');
     const queueList = document.getElementById('queueList');
     const skipVideoBtn = document.getElementById('skipVideoBtn');
+    const shuffleQueueBtn = document.getElementById('shuffleQueueBtn');
     const connectionStatus = document.getElementById('connectionStatus');
     const createInviteBtn = document.getElementById('createInviteBtn');
     const inviteLinkInput = document.getElementById('inviteLink');
@@ -856,6 +863,7 @@
         } else {
             isHost = true;
             startHostHeartbeat();
+            updateSkipButtonState(); // Update button states for host
         }
         // Enhanced leaving detection - multiple methods for reliability
         const sendLeavingMessage = () => {
@@ -1346,6 +1354,41 @@
     searchButton.addEventListener('click', searchYouTube);
     searchInput.addEventListener('keypress', e => e.key === 'Enter' && searchYouTube());
     skipVideoBtn.addEventListener('click', skipToNextVideo);
+    shuffleQueueBtn.addEventListener('click', shuffleQueue);
+
+    // Shuffle queue function (host only)
+    function shuffleQueue() {
+        if (!isHost) {
+            console.log('[QUEUE] Only host can shuffle queue');
+            return;
+        }
+        
+        if (videoQueue.length === 0) {
+            console.log('[QUEUE] Queue is empty, nothing to shuffle');
+            return;
+        }
+        
+        // Fisher-Yates shuffle algorithm
+        const shuffled = [...videoQueue];
+        for (let i = shuffled.length - 1; i > 0; i--) {
+            const j = Math.floor(Math.random() * (i + 1));
+            [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
+        }
+        
+        videoQueue = shuffled;
+        console.log('[QUEUE] Shuffled queue with', videoQueue.length, 'videos');
+        
+        // Broadcast shuffled queue to all guests
+        const queueUpdateData = { type: 'QUEUE_UPDATE', queue: videoQueue };
+        Object.entries(dataChannels).forEach(([id, channel]) => {
+            if (id !== 'host' && channel && channel.readyState === 'open') {
+                channel.send(JSON.stringify(queueUpdateData));
+            }
+        });
+        
+        // Update host's own queue UI
+        updateQueueUI();
+    }
 
     async function searchYouTube() {
 		const query = searchInput.value;
@@ -1622,6 +1665,7 @@
         isHost = true;
         partyId = crypto.randomUUID();
         currentHostId = myAuthId;
+        updateSkipButtonState(); // Update button states for host
         const url = `${window.location.href.split('?')[0]}?party=${partyId}`;
         inviteLinkInput.value = url;
         // Show inline row with copy button
@@ -3540,6 +3584,7 @@ let guestTimePositions = {}; // Track guest positions for reverse sync
             
             // Update UI
             updateUIForNewHost();
+            updateSkipButtonState(); // Update button states for new host
             
             // Start host functionality
             listenForGuests();
@@ -3704,6 +3749,9 @@ let guestTimePositions = {}; // Track guest positions for reverse sync
     // Update skip button state based on queue
     function updateSkipButtonState() {
         skipVideoBtn.disabled = videoQueue.length === 0;
+        // Update shuffle button - only enabled for host with items in queue
+        shuffleQueueBtn.disabled = !isHost || videoQueue.length === 0;
+        shuffleQueueBtn.style.display = isHost ? 'block' : 'none';
     }
 
     function updateQueueUI() {
