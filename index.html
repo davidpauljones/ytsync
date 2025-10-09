@@ -71,7 +71,6 @@
                 max-width: none; /* Remove width constraint for wide screens */
                 padding: 24px 48px; /* More padding on very wide screens */
             }
-            .chat-container { grid-column: 1 / 2; grid-row: 2 / 3; margin-top: 0; } /* rely on grid row gap */
         }
         @media (min-width: 1440px) {
             .page-container {
@@ -206,7 +205,6 @@
         .status.connecting { background-color: #fff3cd; color: #664d03; }
         button { background-color: var(--yt-red); color: white; padding: 10px 16px; border: none; border-radius: 40px; cursor: pointer; font-size: 14px; font-weight: 500; transition: background-color 0.2s; }
         button:hover { background-color: var(--yt-red-hover); }
-        .chat-container { margin-top: 24px; }
         
         /* Medium desktop layout - safer grid for 1024-1300px */
         @media (min-width: 1024px) and (max-width: 1300px) {
@@ -218,12 +216,6 @@
                 max-width: 1280px;
                 margin: 0 auto;
                 padding: 20px;
-            }
-            .chat-container { 
-                grid-column: 1 / 2; 
-                grid-row: 2 / 3; 
-                margin-top: 0;
-                max-width: 100%;
             }
         }
         
@@ -239,23 +231,7 @@
                 margin: 0 auto;
                 padding: 20px;
             }
-            .chat-container { 
-                grid-column: 1 / 2; 
-                grid-row: 2 / 3; 
-                margin-top: 0; 
-                /* Constrain chat width to match video width */
-                max-width: min(calc(100vw - 450px), calc((100vh - 200px) * 16 / 9));
-            }
         }
-        .chat-messages { height: 300px; overflow-y: auto; border: 1px solid var(--border-color); background-color: var(--primary-background); padding: 10px; margin-bottom: 10px; border-radius: 8px; display: flex; flex-direction: column; gap: 16px; }
-        .chat-message { display: flex; align-items: flex-start; gap: 12px; }
-        .avatar { width: 40px; height: 40px; border-radius: 50%; color: white; display: flex; align-items: center; justify-content: center; font-weight: bold; flex-shrink: 0; font-size: 18px; }
-        .message-body { display: flex; flex-direction: column; }
-        .sender { font-weight: 500; font-size: 14px; margin-bottom: 2px; color: var(--primary-text); }
-        .message-text { font-size: 14px; line-height: 1.4; color: var(--primary-text); }
-        .chat-input-container { display: flex; gap: 8px; }
-        #chatInput { flex-grow: 1; border-radius: 20px; background-color: var(--input-background); border: 1px solid var(--border-color); color: var(--primary-text); padding: 10px; }
-        #sendChatBtn { padding: 10px 20px; }
         .player-controls { display: flex; justify-content: space-between; align-items: center; padding: 8px 12px; margin-top: 16px; background-color: var(--secondary-background); border: 1px solid var(--border-color); border-radius: 12px; }
         .video-title-toolbar { flex-grow: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-weight: bold; font-size: 16px; padding-right: 16px; }
         #theaterModeBtn { background: none; border: 1px solid var(--border-color); color: var(--primary-text); padding: 8px; border-radius: 50%; cursor: pointer; display: flex; align-items: center; justify-content: center; z-index: 50; flex-shrink: 0; }
@@ -323,7 +299,7 @@
         }
         /* Hide the toolbar in theater mode */
         body.theater-mode .player-controls { display: none; }
-        body.theater-mode .header, body.theater-mode .sidebar, body.theater-mode .chat-container, body.theater-mode .page-container > .main-content ~ * { display: none; }
+        body.theater-mode .header, body.theater-mode .sidebar, body.theater-mode .page-container > .main-content ~ * { display: none; }
         .expand-icon { display: block; }
         .close-icon { display: none; }
         body.theater-mode .expand-icon { display: none; }
@@ -556,14 +532,6 @@
             </div>
         </div>
 
-        <div class="chat-container sidebar-section">
-            <h3>Live Chat</h3>
-            <div class="chat-messages" id="chatMessages"></div>
-            <div class="chat-input-container">
-                <input type="text" id="chatInput" placeholder="Say something...">
-                <button id="sendChatBtn">Send</button>
-            </div>
-        </div>
     </div>
 </div>
 
@@ -631,9 +599,6 @@
     const inviteRow = document.getElementById('inviteRow');
     const copyInviteBtn = document.getElementById('copyInviteBtn');
     const userList = document.getElementById('userList');
-    const chatMessages = document.getElementById('chatMessages');
-    const chatInput = document.getElementById('chatInput');
-    const sendChatBtn = document.getElementById('sendChatBtn');
     const videoTitleElement = document.getElementById('videoTitle');
 
     // --- APP STATE ---
@@ -892,10 +857,6 @@
             isHost = true;
             startHostHeartbeat();
         }
-        sendChatBtn.addEventListener('click', sendChatMessage);
-        chatInput.addEventListener('keypress', e => {
-            if (e.key === 'Enter') sendChatMessage();
-        });
         // Enhanced leaving detection - multiple methods for reliability
         const sendLeavingMessage = () => {
             const data = { type: 'USER_LEAVING' };
@@ -2073,52 +2034,6 @@
         window.migrationInProgress = false;
     }
 
-    const userColors = ['#ff7675', '#74b9ff', '#55efc4', '#ffeaa7', '#a29bfe', '#fd79a8', '#00cec9', '#fab1a0'];
-    const getUserColor = (userName) => {
-        let hash = 0;
-        for (let i = 0; i < userName.length; i++) {
-            hash = userName.charCodeAt(i) + ((hash << 5) - hash);
-        }
-        return userColors[Math.abs(hash % userColors.length)];
-    };
-
-    function sendChatMessage() {
-        const text = chatInput.value.trim();
-        if (text) {
-            const messageData = { type: 'CHAT_MESSAGE', text: text, sender: myName };
-            Object.values(dataChannels).forEach(channel => {
-                if (channel && channel.readyState === 'open') {
-                    channel.send(JSON.stringify(messageData));
-                }
-            });
-            displayChatMessage(messageData);
-            chatInput.value = '';
-        }
-    }
-
-    function displayChatMessage({ text, sender }) {
-        const messageEl = document.createElement('div');
-        messageEl.classList.add('chat-message');
-        const avatarEl = document.createElement('div');
-        avatarEl.classList.add('avatar');
-        avatarEl.textContent = sender.charAt(0).toUpperCase();
-        avatarEl.style.backgroundColor = getUserColor(sender);
-        const messageBodyEl = document.createElement('div');
-        messageBodyEl.classList.add('message-body');
-        const senderEl = document.createElement('div');
-        senderEl.classList.add('sender');
-        senderEl.textContent = sender;
-        const textEl = document.createElement('div');
-        textEl.classList.add('message-text');
-        textEl.textContent = text;
-        messageBodyEl.appendChild(senderEl);
-        messageBodyEl.appendChild(textEl);
-        messageEl.appendChild(avatarEl);
-        messageEl.appendChild(messageBodyEl);
-        chatMessages.appendChild(messageEl);
-        chatMessages.scrollTop = chatMessages.scrollHeight;
-    }
-
     // Add this variable declaration around line 580, with the other state variables:
 let hostMigrationInProgress = false;
 let hostMigrationTimeout = null;
@@ -3154,9 +3069,6 @@ let guestTimePositions = {}; // Track guest positions for reverse sync
                 break;
             case 'USER_LIST':
                 updateUserList(data.users);
-                break;
-            case 'CHAT_MESSAGE':
-                if (senderId !== 'local') displayChatMessage(data);
                 break;
         }
     }
