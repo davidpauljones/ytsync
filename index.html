@@ -663,6 +663,7 @@
     let hostHeartbeatInterval;
     let connectionKeepaliveInterval;
     let connectionMonitorInterval;
+    let isInitialConnection = false; // Track if guest is making initial connection
     const CONNECTION_KEEPALIVE_INTERVAL = 45000; // 45 seconds
     const CONNECTION_MONITOR_INTERVAL = 10000; // 10 seconds
     let lastKeepaliveReceived = {}; // Track last keepalive from each peer
@@ -1811,9 +1812,41 @@
 
     async function joinParty() {
         if (!myAuthId) return alert("Cannot join party, not connected.");
+        
+        // Set initial connection flag to prevent race conditions
+        isInitialConnection = true;
+        console.log('[JOIN] Starting initial connection to party...');
+        
+        // Update connection status
+        connectionStatus.textContent = 'Status: Connecting to party...';
+        connectionStatus.className = 'status connecting';
+        
         partyDocRef = db.collection('parties').doc(partyId);
         const guestDocRef = partyDocRef.collection('guests').doc(myAuthId);
         console.log('[JOIN] Starting joinParty for', myAuthId, 'party:', partyId);
+        
+        try {
+            // First, check if party exists
+            const partyDoc = await partyDocRef.get();
+            if (!partyDoc.exists) {
+                isInitialConnection = false;
+                connectionStatus.textContent = 'Status: Party not found';
+                connectionStatus.className = 'status disconnected';
+                return alert('Party does not exist. Please check the invite link.');
+            }
+            
+            const partyData = partyDoc.data();
+            currentHostId = partyData.hostId;
+            console.log('[JOIN] Party exists, host:', currentHostId);
+            
+            connectionStatus.textContent = 'Status: Setting up connection...';
+        } catch (e) {
+            console.error('[JOIN] Failed to fetch party document:', e);
+            isInitialConnection = false;
+            connectionStatus.textContent = 'Status: Connection failed';
+            connectionStatus.className = 'status disconnected';
+            return alert('Failed to connect to party. Please try again.');
+        }
 
         const pc = createPeerConnection('host');
         const candidateBuffer = [];
@@ -1847,28 +1880,61 @@
             const offer = await pc.createOffer();
             await pc.setLocalDescription(offer);
             console.log('[JOIN] Created offer');
+            connectionStatus.textContent = 'Status: Waiting for host response...';
             await guestDocRef.set({ offer, name: myName });
             console.log('[JOIN] Wrote offer to Firestore');
         } catch (e) {
             console.error('[JOIN] Failed to create/send offer:', e);
+            isInitialConnection = false;
+            connectionStatus.textContent = 'Status: Connection failed';
+            connectionStatus.className = 'status disconnected';
             alert('Could not join the party (offer failed). Check console for details.');
             return;
         }
+        
+        // Set a timeout for initial connection (30 seconds)
+        const connectionTimeout = setTimeout(() => {
+            if (isInitialConnection) {
+                console.error('[JOIN] Initial connection timeout after 30 seconds');
+                isInitialConnection = false;
+                alert('Connection to host timed out. Please try refreshing the page.');
+            }
+        }, 30000);
 
         guestDocRef.onSnapshot(async (snapshot) => {
             const data = snapshot.data();
             if (!data) return;
             
             // Apply the host's answer only once and only in have-local-offer state
-            if (data.answer && !pc._answerApplied && pc.signalingState === 'have-local-offer') {
-                try {
-                    await pc.setRemoteDescription(new RTCSessionDescription(data.answer));
-                    pc._answerApplied = true;
-                    console.log('[JOIN] Set remote description (answer) from host');
-                    candidateBuffer.forEach(c => pc.addIceCandidate(new RTCIceCandidate(c)).catch(err => console.error('[JOIN] addIceCandidate (buffer) failed:', err)));
-                    candidateBuffer.length = 0;
-                } catch (e) {
-                    console.error('[JOIN] Failed to set remote description:', e);
+            if (data.answer && !pc._answerApplied) {
+                // Check if we're in the right state to accept the answer
+                if (pc.signalingState === 'have-local-offer') {
+                    try {
+                        await pc.setRemoteDescription(new RTCSessionDescription(data.answer));
+                        pc._answerApplied = true;
+                        console.log('[JOIN] Set remote description (answer) from host');
+                        // Apply buffered candidates
+                        candidateBuffer.forEach(c => pc.addIceCandidate(new RTCIceCandidate(c)).catch(err => console.error('[JOIN] addIceCandidate (buffer) failed:', err)));
+                        candidateBuffer.length = 0;
+                    } catch (e) {
+                        console.error('[JOIN] Failed to set remote description:', e);
+                        // Retry after a short delay if this was a timing issue
+                        setTimeout(async () => {
+                            if (!pc._answerApplied && pc.signalingState === 'have-local-offer') {
+                                try {
+                                    await pc.setRemoteDescription(new RTCSessionDescription(data.answer));
+                                    pc._answerApplied = true;
+                                    console.log('[JOIN] Set remote description (retry successful)');
+                                    candidateBuffer.forEach(c => pc.addIceCandidate(new RTCIceCandidate(c)).catch(err => console.error('[JOIN] addIceCandidate failed:', err)));
+                                    candidateBuffer.length = 0;
+                                } catch (retryError) {
+                                    console.error('[JOIN] Retry also failed:', retryError);
+                                }
+                            }
+                        }, 1000);
+                    }
+                } else {
+                    console.warn(`[JOIN] Received answer but signaling state is ${pc.signalingState}, not have-local-offer`);
                 }
             }
         });
@@ -2329,6 +2395,13 @@ let guestTimePositions = {}; // Track guest positions for reverse sync
         
         channel.onopen = () => {
             console.log(`[DC:${peerId}] open`);
+            
+            // Clear initial connection flag and timeout if this is the host channel
+            if (peerId === 'host' && isInitialConnection) {
+                console.log('[JOIN] Initial connection successful!');
+                isInitialConnection = false;
+            }
+            
             hostMigrationInProgress = false; // Changed from window.migrationInProgress
             updateConnectionStatus();
             
@@ -3542,6 +3615,15 @@ let guestTimePositions = {}; // Track guest positions for reverse sync
                 // Detect host change - critical for catching migrations we didn't trigger
                 if (docHostId && docHostId !== lastKnownHostId && docHostId !== myAuthId) {
                     console.warn(`[HOST-MONITOR] Host changed from ${lastKnownHostId} to ${docHostId}`);
+                    
+                    // Don't trigger reconnection during initial connection
+                    if (isInitialConnection) {
+                        console.log('[HOST-MONITOR] Skipping host change handling - initial connection in progress');
+                        lastKnownHostId = docHostId;
+                        currentHostId = docHostId;
+                        return;
+                    }
+                    
                     lastKnownHostId = docHostId;
                     currentHostId = docHostId;
                     
@@ -3564,7 +3646,8 @@ let guestTimePositions = {}; // Track guest positions for reverse sync
         
         // Check host activity every 10 seconds
         hostActivityInterval = setInterval(() => {
-            if (isHost || hostMigrationInProgress) return; // Skip if we became host or migration in progress
+            // Skip checks during initial connection
+            if (isHost || hostMigrationInProgress || isInitialConnection) return;
             
             const now = Date.now();
             const timeSinceLastActivity = now - lastHostActivity;
@@ -3592,6 +3675,12 @@ let guestTimePositions = {}; // Track guest positions for reverse sync
     }
 
     async function handleHostDisconnection() {
+        // Prevent migration during initial connection attempts
+        if (isInitialConnection) {
+            console.log('[MIGRATION] Skipping migration - initial connection in progress');
+            return;
+        }
+        
         if (hostMigrationInProgress) {
             console.log('[MIGRATION] Already in progress, ignoring duplicate call');
             return;
@@ -3969,6 +4058,12 @@ let guestTimePositions = {}; // Track guest positions for reverse sync
 
     // Reconnect to new host as guest
     async function reconnectAsGuest() {
+        // Don't reconnect if we're already in initial connection
+        if (isInitialConnection) {
+            console.log('[MIGRATION] Skipping reconnect - initial connection already in progress');
+            return;
+        }
+        
         const maxRetries = 3;
         let lastError;
         
