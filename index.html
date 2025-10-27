@@ -2767,6 +2767,25 @@ let guestTimePositions = {}; // Track guest positions for reverse sync
                     channel._lastPingResponse = Date.now();
                 }
                 return; // Don't process further
+            case 'HOST_MIGRATED':
+                // New host is announcing migration completion
+                console.log(`[MIGRATION] Host migrated from ${data.previousHostId} to ${data.newHostId}${data.fallback ? ' (fallback)' : ''}`);
+                
+                // Update our current host ID
+                currentHostId = data.newHostId;
+                
+                // If we're not already in migration and not the new host, reconnect
+                if (!hostMigrationInProgress && !isHost && data.newHostId !== myAuthId) {
+                    console.log('[MIGRATION] Reconnecting to new host after external migration...');
+                    
+                    // Clean up old connections and reconnect
+                    cleanupAllConnections().then(() => {
+                        return reconnectAsGuest();
+                    }).catch(error => {
+                        console.error('[MIGRATION] Failed to reconnect after HOST_MIGRATED:', error);
+                    });
+                }
+                return; // Don't process further
             case 'HOST_INFO':
                 currentHostId = data.hostId;
                 break;
@@ -3507,15 +3526,38 @@ let guestTimePositions = {}; // Track guest positions for reverse sync
         
         let hostActivityInterval;
         let lastHostActivity = Date.now();
+        let lastKnownHostId = currentHostId;
         
-        // Monitor party document for host activity timestamps
+        // Monitor party document for host activity timestamps AND host changes
         const hostActivityListener = partyDocRef.onSnapshot((doc) => {
             if (doc.exists) {
                 const data = doc.data();
                 const lastHeartbeat = data.lastHeartbeat;
+                const docHostId = data.hostId;
                 
                 if (lastHeartbeat) {
                     lastHostActivity = lastHeartbeat.toMillis ? lastHeartbeat.toMillis() : lastHeartbeat;
+                }
+                
+                // Detect host change - critical for catching migrations we didn't trigger
+                if (docHostId && docHostId !== lastKnownHostId && docHostId !== myAuthId) {
+                    console.warn(`[HOST-MONITOR] Host changed from ${lastKnownHostId} to ${docHostId}`);
+                    lastKnownHostId = docHostId;
+                    currentHostId = docHostId;
+                    
+                    // If we're not already in a migration, trigger reconnection to new host
+                    if (!hostMigrationInProgress && !isHost) {
+                        console.log('[HOST-MONITOR] Detected external host migration, reconnecting to new host...');
+                        
+                        // Clean up old connections and reconnect
+                        cleanupAllConnections().then(() => {
+                            return reconnectAsGuest();
+                        }).catch(error => {
+                            console.error('[HOST-MONITOR] Failed to reconnect to new host:', error);
+                            // If reconnection fails, trigger our own migration
+                            handleHostDisconnection();
+                        });
+                    }
                 }
             }
         });
@@ -3562,9 +3604,9 @@ let guestTimePositions = {}; // Track guest positions for reverse sync
         const migrationTimeout = setTimeout(() => {
             console.warn('[MIGRATION] Migration timeout - resetting flag');
             hostMigrationInProgress = false;
-        }, 15000);
+        }, 30000); // Extended to 30 seconds
         
-        // Update UI immediately
+        // Update UI immediately with more detailed status
         connectionStatus.textContent = 'Status: Host disconnected, electing new host...';
         connectionStatus.className = 'status connecting';
         
@@ -3580,17 +3622,32 @@ let guestTimePositions = {}; // Track guest positions for reverse sync
                 await becomeNewHost();
             } else {
                 console.log('[MIGRATION] Waiting for another client to become host');
-                await waitForNewHost();
+                connectionStatus.textContent = 'Status: Waiting for new host...';
+                try {
+                    await waitForNewHost();
+                } catch (waitError) {
+                    console.error('[MIGRATION] Failed to connect to new host:', waitError);
+                    
+                    // Fallback: try to become host ourselves after timeout
+                    console.log('[MIGRATION] Attempting fallback: claiming host role after timeout');
+                    connectionStatus.textContent = 'Status: Taking over as host...';
+                    try {
+                        await becomeNewHostFallback();
+                    } catch (fallbackError) {
+                        console.error('[MIGRATION] Fallback also failed:', fallbackError);
+                        throw fallbackError; // This will trigger the page reload
+                    }
+                }
             }
             
             clearTimeout(migrationTimeout);
             
         } catch (error) {
-            console.error('[MIGRATION] Host migration failed:', error);
+            console.error('[MIGRATION] Host migration completely failed:', error);
             clearTimeout(migrationTimeout);
             hostMigrationInProgress = false;
             
-            // Fallback: refresh the page
+            // Final fallback: refresh the page
             alert('Host migration failed. The page will refresh to reconnect.');
             window.location.reload();
         }
@@ -3767,7 +3824,13 @@ let guestTimePositions = {}; // Track guest positions for reverse sync
             listenForGuests();
             startHostHeartbeat();
             
-            // Broadcast to any remaining connections
+            // Broadcast migration complete to any remaining connections
+            broadcastData({ 
+                type: 'HOST_MIGRATED',
+                newHostId: myAuthId,
+                previousHostId: currentHostId
+            });
+            
             broadcastData({ 
                 type: 'HOST_INFO', 
                 hostId: myAuthId 
@@ -3795,10 +3858,10 @@ let guestTimePositions = {}; // Track guest positions for reverse sync
             
             // Set a timeout in case no one becomes host
             const timeout = setTimeout(() => {
-                console.warn('[MIGRATION] Timeout waiting for new host');
+                console.warn('[MIGRATION] Timeout waiting for new host (20 seconds elapsed)');
                 unsubscribe();
                 reject(new Error('Timeout waiting for new host'));
-            }, 10000); // 10 second timeout
+            }, 20000); // Extended to 20 seconds
             
             // Listen for host changes
             const unsubscribe = partyDocRef.onSnapshot(
@@ -3843,23 +3906,98 @@ let guestTimePositions = {}; // Track guest positions for reverse sync
         });
     }
 
-    // Reconnect to new host as guest
-    async function reconnectAsGuest() {
+    // Fallback function to force become host after all other options fail
+    async function becomeNewHostFallback() {
         try {
-            console.log('[MIGRATION] Reconnecting as guest to new host');
+            console.log('[MIGRATION-FALLBACK] Attempting to forcefully claim host role after timeout...');
             
-            // Small delay to let new host initialize
-            await new Promise(resolve => setTimeout(resolve, 1000));
+            // Force update Firestore without transaction checks (emergency fallback)
+            await partyDocRef.update({
+                hostId: myAuthId,
+                migratedAt: firebase.firestore.FieldValue.serverTimestamp(),
+                previousHostId: currentHostId,
+                fallbackClaim: true // Flag to indicate this was a fallback claim
+            });
             
-            // Join as guest
-            await joinParty();
+            console.log('[MIGRATION-FALLBACK] Force claimed host role in Firestore');
             
-            console.log('[MIGRATION] Successfully reconnected as guest');
+            // Clean up old guest documents
+            await cleanupOldGuestDocuments();
+            
+            // Update local state
+            isHost = true;
+            currentHostId = myAuthId;
+            
+            // Initialize as host
+            console.log('[MIGRATION-FALLBACK] Initializing as new host...');
             updateConnectionStatus();
+            showGuestControlToggle();
+            updateSkipButtonState(); // Update button states for new host
+            
+            // Start host heartbeat
+            startHostHeartbeat();
+            
+            // Start accepting new guest connections
+            await listenForGuestOffers();
+            
+            // Broadcast migration complete to any remaining connections
+            broadcastData({ 
+                type: 'HOST_MIGRATED',
+                newHostId: myAuthId,
+                previousHostId: currentHostId,
+                fallback: true
+            });
+            
+            broadcastData({ 
+                type: 'HOST_INFO', 
+                hostId: myAuthId 
+            });
+            
+            broadcastData({ 
+                type: 'USER_LIST', 
+                users: localUserList 
+            });
+            
+            console.log('[MIGRATION-FALLBACK] Successfully became host via fallback');
+            hostMigrationInProgress = false;
             
         } catch (error) {
-            console.error('[MIGRATION] Failed to reconnect as guest:', error);
+            console.error('[MIGRATION-FALLBACK] Failed to claim host role:', error);
             throw error;
+        }
+    }
+
+    // Reconnect to new host as guest
+    async function reconnectAsGuest() {
+        const maxRetries = 3;
+        let lastError;
+        
+        for (let attempt = 1; attempt <= maxRetries; attempt++) {
+            try {
+                console.log(`[MIGRATION] Reconnecting as guest to new host (attempt ${attempt}/${maxRetries})`);
+                
+                // Progressive delay: 1s, 2s, 3s
+                await new Promise(resolve => setTimeout(resolve, attempt * 1000));
+                
+                // Join as guest
+                await joinParty();
+                
+                console.log('[MIGRATION] Successfully reconnected as guest');
+                updateConnectionStatus();
+                return; // Success!
+                
+            } catch (error) {
+                console.error(`[MIGRATION] Reconnect attempt ${attempt} failed:`, error);
+                lastError = error;
+                
+                if (attempt === maxRetries) {
+                    console.error('[MIGRATION] All reconnect attempts failed');
+                    throw lastError;
+                }
+                
+                // Continue to next attempt
+                console.log(`[MIGRATION] Retrying connection...`);
+            }
         }
     }
 
