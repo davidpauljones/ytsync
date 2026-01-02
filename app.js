@@ -1,5 +1,5 @@
 // YouTube Party Sync - Main Application
-// Version: 3.3.0
+// Version: 3.3.1
 
 // --- LAYOUT SYSTEM ---
 const layoutToggle = document.getElementById('themeToggle');
@@ -157,12 +157,14 @@ let lastUserGestureAt = 0;
 // Track the currently loaded videoId
 let currentVideoId = null;
 
-// WebRTC configuration (add TURN here for reliability)
+// WebRTC configuration with STUN and free TURN servers for better connectivity
 const rtcConfig = {
     iceServers: [
         { urls: ['stun:stun.l.google.com:19302', 'stun:stun1.l.google.com:19302', 'stun:stun2.l.google.com:19302'] },
-        // Add your TURN server (recommended for production)
-        // { urls: 'turn:YOUR_TURN_HOST:3478', username: 'TURN_USERNAME', credential: 'TURN_PASSWORD' },
+        // Free TURN servers from Open Relay Project (https://www.metered.ca/tools/openrelay/)
+        { urls: 'turn:openrelay.metered.ca:80', username: 'openrelayproject', credential: 'openrelayproject' },
+        { urls: 'turn:openrelay.metered.ca:443', username: 'openrelayproject', credential: 'openrelayproject' },
+        { urls: 'turn:openrelay.metered.ca:443?transport=tcp', username: 'openrelayproject', credential: 'openrelayproject' },
     ],
     iceCandidatePoolSize: 2,
 };
@@ -745,6 +747,18 @@ async function joinParty() {
     dataChannels['host'] = pc.createDataChannel('sync-channel');
     console.log('[JOIN] Created data channel to host');
     configureDataChannel('host', dataChannels['host']);
+    
+    // Connection timeout - show warning if not connected after 15 seconds
+    const connectionTimeout = setTimeout(() => {
+        if (!dataChannels['host'] || dataChannels['host'].readyState !== 'open') {
+            console.warn('[JOIN] Connection timeout - data channel not open after 15 seconds');
+            alert('Connection is taking longer than expected. This could be due to:\n\n• Ad blocker blocking connection (try disabling uBlock Origin for this site)\n• Firewall/NAT restrictions\n• Host may have left the party\n\nPlease try refreshing the page or ask the host to create a new party.');
+        }
+    }, 15000);
+    
+    // Clear timeout when channel opens
+    const originalOnOpen = dataChannels['host'].onopen;
+    dataChannels['host'].addEventListener('open', () => clearTimeout(connectionTimeout));
 
     const guestCandidatesRef = pc._guestGuestCandidatesRef;
 
