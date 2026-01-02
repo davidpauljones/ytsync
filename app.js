@@ -1,5 +1,5 @@
 // YouTube Party Sync - Main Application
-// Version: 3.2.8
+// Version: 3.2.9
 
 // --- LAYOUT SYSTEM ---
 const layoutToggle = document.getElementById('themeToggle');
@@ -529,6 +529,8 @@ function showSkipNotification(reason) {
     }, 3000);
 }
 
+let playerReady = false;
+
 window.onYouTubeIframeAPIReady = () => player = new YT.Player('player', {
     // Don't load a video initially - wait for user to search/select
     playerVars: {
@@ -538,6 +540,7 @@ window.onYouTubeIframeAPIReady = () => player = new YT.Player('player', {
         origin: window.location.origin
     },
     events: {
+        'onReady': () => { playerReady = true; },
         'onStateChange': onPlayerStateChange,
         'onError': onPlayerError
     }
@@ -1254,12 +1257,15 @@ function stopBufferingWatchdog() {
     }
 }
 
-function handleReceivedData(data, senderId) {
-    // For video-related commands, ensure player is ready (retry if not)
+function handleReceivedData(data, senderId, retryCount = 0) {
+    // For video-related commands, ensure player is ready (retry if not, max 20 retries = 10 seconds)
     if (data.type.includes('VIDEO') || data.type === 'NEW_VIDEO' || data.type === 'INITIAL_SYNC' || data.type === 'STATE_CHANGE' || data.type === 'TIME_UPDATE') {
-        if (!player || typeof player.loadVideoById !== 'function') {
-            console.warn(`[${data.type}] Player not ready yet, retrying in 500ms...`);
-            setTimeout(() => handleReceivedData(data, senderId), 500);
+        if (!playerReady || !player || typeof player.loadVideoById !== 'function') {
+            if (retryCount < 20) {
+                setTimeout(() => handleReceivedData(data, senderId, retryCount + 1), 500);
+            } else {
+                console.error(`[${data.type}] Player failed to initialize after 10 seconds`);
+            }
             return;
         }
     }
