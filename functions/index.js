@@ -1,6 +1,6 @@
 // functions/index.js
 const functions = require("firebase-functions/v2");
-const {onCall} = require("firebase-functions/v2/https");
+const { onCall } = require("firebase-functions/v2/https");
 const axios = require("axios");
 
 exports.searchYoutube = onCall(async (request) => {
@@ -18,34 +18,34 @@ exports.searchYoutube = onCall(async (request) => {
     if (videoId) {
       // If a videoId is provided, use the 'videos.list' endpoint
       response = await axios.get(
-          "https://www.googleapis.com/youtube/v3/videos", {
-            params: {
-              part: "snippet,contentDetails",
-              id: videoId,
-              key: apiKey,
-            },
-          });
+        "https://www.googleapis.com/youtube/v3/videos", {
+          params: {
+            part: "snippet,contentDetails",
+            id: videoId,
+            key: apiKey,
+          },
+        });
     } else if (playlistId) {
       // If a playlistId is provided, get playlist details
       const playlistResponse = await axios.get(
-          "https://www.googleapis.com/youtube/v3/playlists", {
-            params: {
-              part: "snippet,contentDetails",
-              id: playlistId,
-              key: apiKey,
-            },
-          });
+        "https://www.googleapis.com/youtube/v3/playlists", {
+          params: {
+            part: "snippet,contentDetails",
+            id: playlistId,
+            key: apiKey,
+          },
+        });
 
       // Also get the playlist items (videos in the playlist)
       const playlistItemsResponse = await axios.get(
-          "https://www.googleapis.com/youtube/v3/playlistItems", {
-            params: {
-              part: "snippet,contentDetails",
-              playlistId: playlistId,
-              key: apiKey,
-              maxResults: 50,
-            },
-          });
+        "https://www.googleapis.com/youtube/v3/playlistItems", {
+          params: {
+            part: "snippet,contentDetails",
+            playlistId: playlistId,
+            key: apiKey,
+            maxResults: 50,
+          },
+        });
 
       // Combine playlist info with its items
       return {
@@ -55,15 +55,15 @@ exports.searchYoutube = onCall(async (request) => {
     } else if (searchQuery) {
       // Search endpoint - can search for videos, playlists, or both
       const searchResponse = await axios.get(
-          "https://www.googleapis.com/youtube/v3/search", {
-            params: {
-              part: "snippet",
-              q: searchQuery,
-              key: apiKey,
-              type: searchType,
-              maxResults: 20,
-            },
-          });
+        "https://www.googleapis.com/youtube/v3/search", {
+          params: {
+            part: "snippet",
+            q: searchQuery,
+            key: apiKey,
+            type: searchType,
+            maxResults: 20,
+          },
+        });
 
       // Separate videos and playlists
       const videoIds = [];
@@ -82,31 +82,31 @@ exports.searchYoutube = onCall(async (request) => {
       // Get full details for videos
       if (videoIds.length > 0) {
         const videosResponse = await axios.get(
-            "https://www.googleapis.com/youtube/v3/videos", {
-              params: {
-                part: "snippet,contentDetails",
-                id: videoIds.join(","),
-                key: apiKey,
-              },
-            });
+          "https://www.googleapis.com/youtube/v3/videos", {
+            params: {
+              part: "snippet,contentDetails",
+              id: videoIds.join(","),
+              key: apiKey,
+            },
+          });
         results.push(...videosResponse.data.items);
       }
 
       // Get full details for playlists
       if (playlistIds.length > 0) {
         const playlistsResponse = await axios.get(
-            "https://www.googleapis.com/youtube/v3/playlists", {
-              params: {
-                part: "snippet,contentDetails",
-                id: playlistIds.join(","),
-                key: apiKey,
-              },
-            });
+          "https://www.googleapis.com/youtube/v3/playlists", {
+            params: {
+              part: "snippet,contentDetails",
+              id: playlistIds.join(","),
+              key: apiKey,
+            },
+          });
         // Replace search results with full playlist details
         results.forEach((item, index) => {
           if (item.id.kind === "youtube#playlist") {
             const fullPlaylist = playlistsResponse.data.items.find(
-                (p) => p.id === item.id.playlistId,
+              (p) => p.id === item.id.playlistId,
             );
             if (fullPlaylist) {
               results[index] = fullPlaylist;
@@ -115,19 +115,19 @@ exports.searchYoutube = onCall(async (request) => {
         });
       }
 
-      return {items: results};
+      return { items: results };
     } else {
       throw new functions.https.HttpsError(
-          "invalid-argument",
-          "Request must contain 'query', 'videoId', or 'playlistId'.",
+        "invalid-argument",
+        "Request must contain 'query', 'videoId', or 'playlistId'.",
       );
     }
     return response.data;
   } catch (error) {
     console.error("Error fetching from YouTube API:", error.message);
     throw new functions.https.HttpsError(
-        "internal",
-        "Failed to fetch from YouTube API. Check API key and permissions.",
+      "internal",
+      "Failed to fetch from YouTube API. Check API key and permissions.",
     );
   }
 });
