@@ -1,11 +1,15 @@
-// functions/index.js
+// functions/index.js - v5
 const functions = require("firebase-functions/v2");
 const { onCall } = require("firebase-functions/v2/https");
 const axios = require("axios");
 
 exports.searchYoutube = onCall(async (request) => {
-  // Read the secret key from the environment variables
+  // Read the API key from environment variables
   const apiKey = process.env.SECRETS_KEY;
+
+  // Debug: log the first/last 4 chars of the API key
+  const keyPreview = apiKey ? `${apiKey.substring(0, 4)}...${apiKey.substring(apiKey.length - 4)}` : "UNDEFINED";
+  console.log("API Key preview:", keyPreview);
 
   const videoId = request.data.videoId;
   const playlistId = request.data.playlistId;
@@ -61,7 +65,7 @@ exports.searchYoutube = onCall(async (request) => {
             q: searchQuery,
             key: apiKey,
             type: searchType,
-            maxResults: 20,
+            maxResults: 10, // Reduced from 20 to save quota
           },
         });
 
@@ -102,7 +106,7 @@ exports.searchYoutube = onCall(async (request) => {
               key: apiKey,
             },
           });
-        // Replace search results with full playlist details
+          // Replace search results with full playlist details
         results.forEach((item, index) => {
           if (item.id.kind === "youtube#playlist") {
             const fullPlaylist = playlistsResponse.data.items.find(

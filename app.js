@@ -1,5 +1,12 @@
 // YouTube Party Sync - Main Application
-// Version: 3.3.1
+// Version: 3.3.3
+
+// --- API QUOTA OPTIMIZATION ---
+// Cache for Up Next suggestions to avoid repeated API calls
+let upNextCache = { videoId: null, items: [], timestamp: 0 };
+const UPNEXT_CACHE_TTL = 5 * 60 * 1000; // 5 minutes cache
+let lastSearchTime = 0;
+const SEARCH_COOLDOWN = 2000; // 2 second cooldown between searches
 
 // --- LAYOUT SYSTEM ---
 const layoutToggle = document.getElementById('themeToggle');
@@ -221,6 +228,14 @@ async function populateUpNextSuggestions() {
         const vid = data?.video_id || currentVideoId;
         currentVideoId = vid || currentVideoId;
 
+        // Check cache - use cached results if same video and cache is fresh
+        const now = Date.now();
+        if (upNextCache.videoId === vid && upNextCache.items.length > 0 && 
+            (now - upNextCache.timestamp) < UPNEXT_CACHE_TTL) {
+            renderUpNextItems(upNextCache.items, vid);
+            return;
+        }
+
         upNextList.innerHTML = '<div style="grid-column:1/-1;opacity:.8;">Loading suggestions…</div>';
 
         // Call the Cloud Function to search by the current title (approximate related)
@@ -244,36 +259,45 @@ async function populateUpNextSuggestions() {
             return;
         }
 
-        upNextList.innerHTML = '';
-        for (const it of items) {
-            const card = document.createElement('div');
-            card.className = 'upnext-item';
-            card.setAttribute('role', 'button');
-            card.setAttribute('tabindex', '0');
-            card.setAttribute('aria-label', `Play ${it.title}`);
-            card.innerHTML = `
-                <img class="upnext-thumb" src="${it.thumb}" alt="">
-                <div class="upnext-info">
-                    <div class="upnext-title-line" title="${it.title}">${it.title}</div>
-                    <div class="upnext-meta" title="${it.channel}">${it.channel}</div>
-                </div>
-            `;
-            const playSelected = () => {
-                hideUpNextOverlay();
-                handleUserAction({ type: 'NEW_VIDEO', videoId: it.videoId, autoPlay: true });
-            };
-            card.addEventListener('click', playSelected);
-            card.addEventListener('keydown', (e) => {
-                if (e.key === 'Enter' || e.key === ' ') {
-                    e.preventDefault();
-                    playSelected();
-                }
-            });
-            upNextList.appendChild(card);
-        }
+        // Cache the results
+        upNextCache = { videoId: vid, items: items, timestamp: Date.now() };
+        
+        renderUpNextItems(items, vid);
     } catch (e) {
         console.warn('Failed to load suggestions', e);
         upNextList.innerHTML = '<div style="grid-column:1/-1;opacity:.8;">Failed to load suggestions.</div>';
+    }
+}
+
+// Render Up Next items (used by cache and fresh results)
+function renderUpNextItems(items, currentVid) {
+    upNextList.innerHTML = '';
+    for (const it of items) {
+        if (it.videoId === currentVid) continue; // Skip current video
+        const card = document.createElement('div');
+        card.className = 'upnext-item';
+        card.setAttribute('role', 'button');
+        card.setAttribute('tabindex', '0');
+        card.setAttribute('aria-label', `Play ${it.title}`);
+        card.innerHTML = `
+            <img class="upnext-thumb" src="${it.thumb}" alt="">
+            <div class="upnext-info">
+                <div class="upnext-title-line" title="${it.title}">${it.title}</div>
+                <div class="upnext-meta" title="${it.channel}">${it.channel}</div>
+            </div>
+        `;
+        const playSelected = () => {
+            hideUpNextOverlay();
+            handleUserAction({ type: 'NEW_VIDEO', videoId: it.videoId, autoPlay: true });
+        };
+        card.addEventListener('click', playSelected);
+        card.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter' || e.key === ' ') {
+                e.preventDefault();
+                playSelected();
+            }
+        });
+        upNextList.appendChild(card);
     }
 }
 
@@ -555,6 +579,14 @@ async function searchYouTube() {
     const query = searchInput.value.trim();
     if (!query) return;
 
+    // Debounce: prevent rapid successive searches
+    const now = Date.now();
+    if (now - lastSearchTime < SEARCH_COOLDOWN) {
+        console.log('Search cooldown active, please wait...');
+        return;
+    }
+    lastSearchTime = now;
+
     // Show loading spinner
     if (searchSpinner) searchSpinner.classList.remove('hidden');
     resultsList.innerHTML = '<li>Searching...</li>';
@@ -688,7 +720,7 @@ async function loadPlaylistVideos(playlistId, playFirst = false) {
             }
             
             resultsList.innerHTML = `<li style="color: var(--accent);">✓ Added ${videos.length} videos from playlist</li>`;
-            setTimeout(() => searchYouTube(), 2000); // Refresh results after 2s
+            // Removed auto-refresh to save API quota
         } else {
             resultsList.innerHTML = '<li>Playlist is empty or unavailable.</li>';
         }
