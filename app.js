@@ -1,19 +1,73 @@
 // YouTube Party Sync - Main Application
-// Version: 2.0.0
+// Version: 2.1.0
 
-// --- DARK MODE LOGIC ---
-const darkModeToggle = document.getElementById('darkModeToggle');
-if (localStorage.getItem('theme') === 'dark') {
-    document.body.classList.add('dark');
+// --- THEME SYSTEM ---
+const themeToggle = document.getElementById('themeToggle');
+const themeDropdown = document.getElementById('themeDropdown');
+const themeOptions = document.querySelectorAll('.theme-option');
+
+// Available themes
+const THEMES = {
+    'classic-light': 'Classic Light',
+    'classic-dark': 'Classic Dark',
+    'modern-dark': 'Modern Dark',
+    'glass': 'Glassmorphism',
+    'midnight': 'Midnight Purple',
+    'ocean': 'Ocean Blue',
+    'sunset': 'Sunset'
+};
+
+// Load saved theme or default to classic-dark
+function loadTheme() {
+    const savedTheme = localStorage.getItem('theme') || 'classic-dark';
+    applyTheme(savedTheme);
 }
-darkModeToggle.addEventListener('click', () => {
-    document.body.classList.toggle('dark');
-    if (document.body.classList.contains('dark')) {
-        localStorage.setItem('theme', 'dark');
-    } else {
-        localStorage.setItem('theme', 'light');
+
+// Apply theme to document
+function applyTheme(themeName) {
+    // Set data-theme attribute on html element
+    document.documentElement.setAttribute('data-theme', themeName);
+    
+    // Update active state in dropdown
+    themeOptions.forEach(option => {
+        option.classList.toggle('active', option.dataset.theme === themeName);
+    });
+    
+    // Save to localStorage
+    localStorage.setItem('theme', themeName);
+}
+
+// Toggle dropdown visibility
+themeToggle.addEventListener('click', (e) => {
+    e.stopPropagation();
+    themeDropdown.classList.toggle('active');
+});
+
+// Handle theme selection
+themeOptions.forEach(option => {
+    option.addEventListener('click', () => {
+        const themeName = option.dataset.theme;
+        applyTheme(themeName);
+        themeDropdown.classList.remove('active');
+    });
+});
+
+// Close dropdown when clicking outside
+document.addEventListener('click', (e) => {
+    if (!e.target.closest('.theme-selector')) {
+        themeDropdown.classList.remove('active');
     }
 });
+
+// Close dropdown on Escape key
+document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') {
+        themeDropdown.classList.remove('active');
+    }
+});
+
+// Initialize theme on load
+loadTheme();
 
 // --- CONFIGURATION ---
 // Firebase config - API key is safe to expose publicly

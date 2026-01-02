@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>YouTube Sync with Firebase</title>
     <link rel="icon" type="image/svg+xml" href="favicon.svg">
-    <link rel="stylesheet" href="styles.css?v=2.0.0">
+    <link rel="stylesheet" href="styles.css?v=2.1.0">
 </head>
 <body>
 
@@ -33,10 +33,43 @@
             <div id="searchSpinner" class="spinner hidden" aria-hidden="true"></div>
         </div>
         <div class="user-actions">
-            <button id="darkModeToggle" title="Toggle dark mode">
-                <svg class="sun-icon" xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="white" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"></circle><line x1="12" y1="1" x2="12" y2="3"></line><line x1="12" y1="21" x2="12" y2="23"></line><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"></line><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"></line><line x1="1" y1="12" x2="3" y2="12"></line><line x1="21" y1="12" x2="23" y2="12"></line><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"></line><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"></line></svg>
-                <svg class="moon-icon" xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="white" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"></path></svg>
-            </button>
+            <!-- Theme Selector -->
+            <div class="theme-selector">
+                <button class="theme-btn" id="themeToggle" aria-label="Change theme" title="Change theme">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path></svg>
+                    <span>Theme</span>
+                </button>
+                <div class="theme-dropdown" id="themeDropdown">
+                    <button class="theme-option" data-theme="classic-light">
+                        <span class="theme-preview classic-light"></span>
+                        Classic Light
+                    </button>
+                    <button class="theme-option" data-theme="classic-dark">
+                        <span class="theme-preview classic-dark"></span>
+                        Classic Dark
+                    </button>
+                    <button class="theme-option" data-theme="modern-dark">
+                        <span class="theme-preview modern-dark"></span>
+                        Modern Dark
+                    </button>
+                    <button class="theme-option" data-theme="glass">
+                        <span class="theme-preview glass"></span>
+                        Glassmorphism
+                    </button>
+                    <button class="theme-option" data-theme="midnight">
+                        <span class="theme-preview midnight"></span>
+                        Midnight Purple
+                    </button>
+                    <button class="theme-option" data-theme="ocean">
+                        <span class="theme-preview ocean"></span>
+                        Ocean Blue
+                    </button>
+                    <button class="theme-option" data-theme="sunset">
+                        <span class="theme-preview sunset"></span>
+                        Sunset
+                    </button>
+                </div>
+            </div>
         </div>
     </div>
     
@@ -118,7 +151,7 @@
 <script src="https://www.gstatic.com/firebasejs/9.6.7/firebase-functions-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/9.6.7/firebase-auth-compat.js"></script>
 <script src="https://www.youtube.com/iframe_api"></script>
-<script src="app.js?v=2.0.0"></script>
+<script src="app.js?v=2.1.0"></script>
 
 <!-- Reconnection overlay -->
 <div id="reconnectOverlay" class="reconnect-overlay hidden" aria-hidden="true">
