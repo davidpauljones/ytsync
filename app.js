@@ -1,5 +1,5 @@
 // YouTube Party Sync - Main Application
-// Version: 3.2.6
+// Version: 3.2.7
 
 // --- LAYOUT SYSTEM ---
 const layoutToggle = document.getElementById('themeToggle');
@@ -1006,6 +1006,10 @@ const getUserColor = (userName) => {
 
 function handleUserAction(data) {
     if (isHost) {
+        // Never broadcast ENDED state - host handles video ending/queue progression separately
+        if (data.type === 'STATE_CHANGE' && data.state === YT.PlayerState.ENDED) {
+            return;
+        }
         broadcastData(data);
     } else {
         sendRequestToHost(data);
@@ -1016,19 +1020,22 @@ function sendRequestToHost(data) {
     if (isHost) return;
 
     if (data.type === 'STATE_CHANGE') {
+        // Never forward ENDED state to host - only the host handles video ending/queue progression
+        if (data.state === YT.PlayerState.ENDED) {
+            return;
+        }
+        
         // Do not forward pauses caused by hidden tab (not user initiated)
-        if ((data.state === YT.PlayerState.PAUSED || data.state === YT.PlayerState.ENDED) &&
+        if (data.state === YT.PlayerState.PAUSED &&
             document.hidden && !data.userInitiated) {
-            console.log('Suppressing pause from hidden/inactive tab.');
             return;
         }
 
         // Keep ad/buffer suppression for non-pause states
-        if (data.state !== YT.PlayerState.PAUSED && data.state !== YT.PlayerState.ENDED) {
+        if (data.state !== YT.PlayerState.PAUSED) {
             if (officialVideoDuration > 0) {
                 const currentDuration = typeof player.getDuration === 'function' ? player.getDuration() : 0;
                 if (currentDuration === 0 || Math.abs(currentDuration - officialVideoDuration) > 2) {
-                    console.log("Ad/buffer detected. Suppressing non-pause request to host.");
                     return;
                 }
             }
@@ -1312,15 +1319,17 @@ function handleReceivedData(data, senderId) {
             }
             break;
         case 'STATE_CHANGE': {
+            // Ignore ENDED state - only host handles video end/queue progression via NEW_VIDEO
+            if (data.state === YT.PlayerState.ENDED) break;
+            
             lastPlayerState = data.state;
             if (data.state === YT.PlayerState.PLAYING) {
                 const timeDifference = Math.abs(player.getCurrentTime() - data.time);
                 if (timeDifference > 1.5) {
-                    console.log(`Resyncing: Time difference of ${timeDifference.toFixed(2)}s is too large.`);
                     player.seekTo(data.time, true);
                 }
                 player.playVideo();
-            } else if (data.state === YT.PlayerState.PAUSED || data.state === YT.PlayerState.ENDED) {
+            } else if (data.state === YT.PlayerState.PAUSED) {
                 player.pauseVideo();
             }
             break;
