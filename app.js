@@ -1,5 +1,5 @@
 // YouTube Party Sync - Main Application
-// Version: 3.2.7
+// Version: 3.2.8
 
 // --- LAYOUT SYSTEM ---
 const layoutToggle = document.getElementById('themeToggle');
@@ -836,29 +836,22 @@ function listenForGuests() {
                         if (event.candidate) {
                             try {
                                 await guestDocRef.collection('hostCandidates').add(event.candidate.toJSON());
-                                console.log('[HOST] Sent host ICE candidate to', guestId);
                             } catch (e) {
                                 console.error('[HOST] Failed to write host ICE candidate:', e);
                             }
-                        } else {
-                            console.log('[HOST] ICE gathering complete for', guestId);
                         }
                     };
 
                     await pc.setRemoteDescription(new RTCSessionDescription(offer));
-                    console.log('[HOST] Set remote description (offer) from', guestId);
                     const answer = await pc.createAnswer();
                     await pc.setLocalDescription(answer);
-                    console.log('[HOST] Created answer for', guestId);
                     await guestDocRef.update({ answer });
-                    console.log('[HOST] Wrote answer for', guestId);
 
                     guestDocRef.collection('guestCandidates').onSnapshot(snap => {
                         snap.docChanges().forEach(ch => {
                             if (ch.type === 'added') {
                                 const cand = ch.doc.data();
                                 pc.addIceCandidate(new RTCIceCandidate(cand))
-                                    .then(() => console.log('[HOST] Added guest ICE candidate', guestId))
                                     .catch(err => console.error('[HOST] addIceCandidate failed:', err));
                             }
                         });
@@ -872,12 +865,10 @@ function listenForGuests() {
                     const pc = peerConnections[guestId];
                     if (!pc) continue;
                     if (data.offer && pc.signalingState !== 'have-remote-offer') {
-                        console.log('[HOST] Guest', guestId, 'sent ICE-restart offer; answering...');
                         await pc.setRemoteDescription(new RTCSessionDescription(data.offer));
                         const answer = await pc.createAnswer();
                         await pc.setLocalDescription(answer);
                         await doc.ref.update({ answer });
-                        console.log('[HOST] Wrote restart answer for', guestId);
                     }
                 } catch (e) {
                     console.error('[HOST] Failed to process modified guest doc:', guestId, e);
@@ -896,10 +887,9 @@ function createPeerConnection(peerId, peerName) {
     let disconnectTimer = null;
 
     pc.onconnectionstatechange = () => {
-        console.log(`[RTC:${peerId}] connectionState=`, pc.connectionState);
         updateConnectionStatus();
         if (pc.connectionState === 'failed') {
-            console.warn(`[RTC:${peerId}] DTLS failed. Attempting ICE restart (guest side only).`);
+            console.warn(`[RTC:${peerId}] DTLS failed. Attempting ICE restart.`);
             attemptGuestIceRestart(pc);
         }
         if (peerId === 'host' && !isHost) {
@@ -914,12 +904,11 @@ function createPeerConnection(peerId, peerName) {
         }
     };
     pc.oniceconnectionstatechange = () => {
-        console.log(`[RTC:${peerId}] iceConnectionState=`, pc.iceConnectionState);
         if (pc.iceConnectionState === 'disconnected') {
             clearTimeout(disconnectTimer);
             disconnectTimer = setTimeout(() => {
                 if (pc.iceConnectionState === 'disconnected') {
-                    console.warn(`[RTC:${peerId}] Still disconnected; attempting ICE restart (guest side only).`);
+                    console.warn(`[RTC:${peerId}] Still disconnected; attempting ICE restart.`);
                     attemptGuestIceRestart(pc);
                 }
             }, 2000);
@@ -929,8 +918,9 @@ function createPeerConnection(peerId, peerName) {
             clearTimeout(disconnectTimer);
         }
     };
-    pc.onsignalingstatechange = () => console.log(`[RTC:${peerId}] signalingState=`, pc.signalingState);
-    pc.onicegatheringstatechange = () => console.log(`[RTC:${peerId}] iceGatheringState=`, pc.iceGatheringState);
+    // Remove verbose signaling state logging - only log on errors
+    pc.onsignalingstatechange = () => {};
+    pc.onicegatheringstatechange = () => {};
     return pc;
 }
 
@@ -1005,14 +995,11 @@ const getUserColor = (userName) => {
 };
 
 function handleUserAction(data) {
-    console.log('[DEBUG handleUserAction]', data.type, data);
     if (isHost) {
         // Never broadcast ENDED state - host handles video ending/queue progression separately
         if (data.type === 'STATE_CHANGE' && data.state === YT.PlayerState.ENDED) {
-            console.log('[DEBUG handleUserAction] Blocking ENDED broadcast');
             return;
         }
-        console.log('[DEBUG handleUserAction] Host broadcasting');
         broadcastData(data);
     } else {
         sendRequestToHost(data);
@@ -1306,21 +1293,17 @@ function handleReceivedData(data, senderId) {
             officialVideoDuration = data.duration;
             break;
         case 'NEW_VIDEO':
-            console.log('[DEBUG NEW_VIDEO]', { videoId: data.videoId, autoPlay: data.autoPlay, senderId });
             officialVideoDuration = 0;
             currentVideoId = data.videoId;
             hideUpNextOverlay();
             const currentPlayerVideoId = player.getVideoData?.()?.video_id;
-            console.log('[DEBUG NEW_VIDEO] currentPlayerVideoId:', currentPlayerVideoId);
             if (currentPlayerVideoId !== data.videoId) {
                 if (data.autoPlay) {
                     intentToAutoPlay = true;
                 }
-                console.log('[DEBUG NEW_VIDEO] Loading video:', data.videoId);
                 player.loadVideoById(data.videoId);
                 startBufferingWatchdog();
             } else if (data.autoPlay) {
-                console.log('[DEBUG NEW_VIDEO] Same video, playing');
                 player.playVideo();
                 startBufferingWatchdog();
             }
