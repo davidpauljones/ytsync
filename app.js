@@ -1,5 +1,5 @@
 // YouTube Party Sync - Main Application
-// Version: 3.2.9
+// Version: 3.3.0
 
 // --- LAYOUT SYSTEM ---
 const layoutToggle = document.getElementById('themeToggle');
@@ -200,7 +200,6 @@ function showUpNextOverlay() {
     upNextOverlay.style.pointerEvents = 'auto';
     if (playerContainer) playerContainer.classList.add('overlay-active');
     upNextActive = true;
-    console.log('[UpNext] Overlay shown');
 }
 
 function hideUpNextOverlay() {
@@ -210,7 +209,6 @@ function hideUpNextOverlay() {
     upNextOverlay.style.pointerEvents = '';
     if (playerContainer) playerContainer.classList.remove('overlay-active');
     upNextActive = false;
-    console.log('[UpNext] Overlay hidden');
 }
 
 async function populateUpNextSuggestions() {
@@ -532,7 +530,6 @@ function showSkipNotification(reason) {
 let playerReady = false;
 
 window.onYouTubeIframeAPIReady = () => {
-    console.log('[YT API] onYouTubeIframeAPIReady called');
     player = new YT.Player('player', {
         // Don't load a video initially - wait for user to search/select
         playerVars: {
@@ -542,15 +539,11 @@ window.onYouTubeIframeAPIReady = () => {
             origin: window.location.origin
         },
         events: {
-            'onReady': () => { 
-                console.log('[YT API] Player onReady fired');
-                playerReady = true; 
-            },
+            'onReady': () => { playerReady = true; },
             'onStateChange': onPlayerStateChange,
             'onError': onPlayerError
         }
     });
-    console.log('[YT API] Player created:', player);
 };
 
 searchButton.addEventListener('click', searchYouTube);
@@ -918,14 +911,14 @@ function createPeerConnection(peerId, peerName) {
             clearTimeout(disconnectTimer);
             disconnectTimer = setTimeout(() => {
                 if (pc.iceConnectionState === 'disconnected') {
-                    console.warn(`[RTC:${peerId}] Still disconnected; attempting ICE restart.`);
                     attemptGuestIceRestart(pc);
                 }
             }, 2000);
         } else if (pc.iceConnectionState === 'failed') {
-            console.warn(`[RTC:${peerId}] ICE failed. You likely need a TURN server.`);
+            console.warn(`[RTC:${peerId}] ICE failed. You may need a TURN server.`);
         } else if (pc.iceConnectionState === 'connected' || pc.iceConnectionState === 'completed') {
             clearTimeout(disconnectTimer);
+            resetIceRestartCounter(); // Reset counter on successful connection
         }
     };
     // Remove verbose signaling state logging - only log on errors
@@ -934,38 +927,56 @@ function createPeerConnection(peerId, peerName) {
     return pc;
 }
 
-// Guest-side ICE restart helper
+// Guest-side ICE restart helper with rate limiting
+let iceRestartCount = 0;
+let lastIceRestartTime = 0;
+const ICE_RESTART_COOLDOWN = 10000; // 10 seconds between restarts
+const ICE_RESTART_MAX = 5; // Max 5 restarts before giving up
+
 async function attemptGuestIceRestart(pc) {
     // Only guests restart toward the host
     if (isHost || pc.peerId !== 'host') return;
     if (!pc._guestDocRef) return;
     if (pc._iceRestartInProgress) {
-        console.log('[JOIN] ICE restart already in progress; skipping.');
         return;
     }
     if (pc.signalingState === 'closed') {
-        console.warn('[JOIN] ICE restart skipped; connection already closed.');
         return;
     }
+    
+    // Rate limiting
+    const now = Date.now();
+    if (now - lastIceRestartTime < ICE_RESTART_COOLDOWN) {
+        return;
+    }
+    if (iceRestartCount >= ICE_RESTART_MAX) {
+        console.warn('[JOIN] ICE restart limit reached. Connection may be unstable.');
+        return;
+    }
+    
     pc._iceRestartInProgress = true;
+    lastIceRestartTime = now;
+    iceRestartCount++;
+    
     try {
-        console.log('[JOIN] Attempting ICE restart...');
-        // Do NOT clear candidate subcollections (avoid permission issues).
-        // Create a new offer with iceRestart
+        console.log('[JOIN] Attempting ICE restart...', iceRestartCount, '/', ICE_RESTART_MAX);
         const offer = await pc.createOffer({ iceRestart: true });
         await pc.setLocalDescription(offer);
-        // Clear old answer so host will respond with a fresh answer
         await pc._guestDocRef.update({
             offer,
             restartedAt: Date.now(),
             answer: firebase.firestore.FieldValue.delete()
         });
-        console.log('[JOIN] Wrote restart offer');
     } catch (e) {
         console.error('[JOIN] ICE restart failed:', e);
     } finally {
         pc._iceRestartInProgress = false;
     }
+}
+
+// Reset ICE restart counter when connection is successful
+function resetIceRestartCounter() {
+    iceRestartCount = 0;
 }
 
 // Utility: delete all docs in a subcollection (candidates)
