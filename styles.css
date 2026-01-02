@@ -571,6 +571,41 @@ button:disabled {
     transform: scale(1.1);
 }
 
+/* Hide Queue Button */
+.hide-queue-btn {
+    padding: 4px 8px;
+    font-size: 14px;
+    background: var(--bg-tertiary);
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-sm);
+    color: var(--text-primary);
+    cursor: pointer;
+    margin-left: var(--space-xs);
+    vertical-align: middle;
+    transition: var(--transition);
+    display: none; /* Hidden by default, shown for host */
+}
+
+body.is-host .hide-queue-btn {
+    display: inline-block;
+}
+
+.hide-queue-btn:hover {
+    background: var(--accent);
+    border-color: var(--accent);
+}
+
+.hide-queue-btn.active {
+    background: var(--error);
+    border-color: var(--error);
+    opacity: 0.7;
+}
+
+/* Hidden queue state */
+#queueList.queue-hidden {
+    display: none;
+}
+
 /* Invite Section */
 #createInviteBtn {
     width: 100%;

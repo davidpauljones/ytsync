@@ -1,5 +1,5 @@
 // YouTube Party Sync - Main Application
-// Version: 3.1.2
+// Version: 3.1.3
 
 // --- LAYOUT SYSTEM ---
 const layoutToggle = document.getElementById('themeToggle');
@@ -115,6 +115,7 @@ const searchSpinner = document.getElementById('searchSpinner');
 const resultsList = document.getElementById('results');
 const queueList = document.getElementById('queueList');
 const shuffleQueueBtn = document.getElementById('shuffleQueueBtn');
+const hideQueueBtn = document.getElementById('hideQueueBtn');
 const connectionStatus = document.getElementById('connectionStatus');
 const createInviteBtn = document.getElementById('createInviteBtn');
 const inviteLinkInput = document.getElementById('inviteLink');
@@ -136,6 +137,7 @@ const peerConnections = {};
 const dataChannels = {};
 let partyDocRef;
 let videoQueue = [];
+let queueHidden = false;
 let lastPlayerState = -1;
 let officialVideoDuration = 0;
 let hostHeartbeatInterval;
@@ -952,6 +954,9 @@ function configureDataChannel(peerId, channel, peerName = '') {
             broadcastData({ type: 'USER_LIST', users });
             channel.send(JSON.stringify({ type: 'HOST_INFO', hostId: myAuthId }));
             
+            // Send queue visibility state to new guest
+            channel.send(JSON.stringify({ type: 'QUEUE_VISIBILITY', hidden: queueHidden }));
+            
             // Get the current video ID - try player first, fall back to currentVideoId
             const playerVideoId = player?.getVideoData?.()?.video_id;
             const videoId = playerVideoId || currentVideoId;
@@ -1195,6 +1200,17 @@ function handleReceivedData(data, senderId) {
                 broadcastData({ type: 'QUEUE_UPDATE', queue: videoQueue });
             }
             break;
+        case 'TOGGLE_QUEUE_VISIBILITY':
+            if (isHost) {
+                queueHidden = !queueHidden;
+                updateQueueVisibility();
+                broadcastData({ type: 'QUEUE_VISIBILITY', hidden: queueHidden });
+            }
+            break;
+        case 'QUEUE_VISIBILITY':
+            queueHidden = data.hidden;
+            updateQueueVisibility();
+            break;
         case 'USER_LEAVING':
             if (isHost && peerConnections[senderId]) {
                 peerConnections[senderId].close();
@@ -1234,6 +1250,25 @@ shuffleQueueBtn.addEventListener('click', () => {
     if (videoQueue.length < 2) return;
     handleUserAction({ type: 'SHUFFLE_QUEUE' });
 });
+
+// Hide queue handler (host only)
+hideQueueBtn.addEventListener('click', () => {
+    if (!isHost) return;
+    handleUserAction({ type: 'TOGGLE_QUEUE_VISIBILITY' });
+});
+
+// Update queue visibility UI
+function updateQueueVisibility() {
+    if (queueHidden) {
+        queueList.classList.add('queue-hidden');
+        hideQueueBtn.classList.add('active');
+        hideQueueBtn.title = 'Show Queue for Everyone';
+    } else {
+        queueList.classList.remove('queue-hidden');
+        hideQueueBtn.classList.remove('active');
+        hideQueueBtn.title = 'Hide Queue for Everyone';
+    }
+}
 
 function startHostHeartbeat() {
     if (hostHeartbeatInterval) clearInterval(hostHeartbeatInterval);
@@ -1387,6 +1422,9 @@ function updateConnectionStatus() {
     // Show just "Connected" when connected; otherwise keep the "Status: ..." prefix
     connectionStatus.textContent = statusClass === 'connected' ? 'Connected' : `Status: ${statusText}`;
     connectionStatus.className = `status ${statusClass}`;
+    
+    // Update body class for host-only UI elements
+    document.body.classList.toggle('is-host', isHost);
 }
 
 function updateUserList(users = {}) {
