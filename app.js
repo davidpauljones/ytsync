@@ -1,10 +1,12 @@
 // YouTube Party Sync - Main Application
-// Version: 3.0.0
+// Version: 3.1.0
 
 // --- LAYOUT SYSTEM ---
 const layoutToggle = document.getElementById('themeToggle');
 const layoutDropdown = document.getElementById('themeDropdown');
 const layoutOptions = document.querySelectorAll('.theme-option');
+const cinemaSidebarToggle = document.getElementById('cinemaSidebarToggle');
+const sidebar = document.querySelector('.sidebar');
 
 // Available layouts
 const LAYOUTS = {
@@ -29,6 +31,14 @@ function applyLayout(layoutName) {
         option.classList.toggle('active', option.dataset.layout === layoutName);
     });
     
+    // Close cinema sidebar when switching layouts
+    if (sidebar) {
+        sidebar.classList.remove('open');
+    }
+    if (cinemaSidebarToggle) {
+        cinemaSidebarToggle.classList.remove('active');
+    }
+    
     // Save to localStorage
     localStorage.setItem('layout', layoutName);
 }
@@ -48,6 +58,14 @@ layoutOptions.forEach(option => {
     });
 });
 
+// Cinema sidebar toggle
+if (cinemaSidebarToggle && sidebar) {
+    cinemaSidebarToggle.addEventListener('click', () => {
+        sidebar.classList.toggle('open');
+        cinemaSidebarToggle.classList.toggle('active');
+    });
+}
+
 // Close dropdown when clicking outside
 document.addEventListener('click', (e) => {
     if (!e.target.closest('.theme-selector')) {
@@ -59,6 +77,9 @@ document.addEventListener('click', (e) => {
 document.addEventListener('keydown', (e) => {
     if (e.key === 'Escape') {
         layoutDropdown.classList.remove('active');
+        // Also close cinema sidebar
+        if (sidebar) sidebar.classList.remove('open');
+        if (cinemaSidebarToggle) cinemaSidebarToggle.classList.remove('active');
     }
 });
 
@@ -99,9 +120,6 @@ const inviteLinkInput = document.getElementById('inviteLink');
 const inviteRow = document.getElementById('inviteRow');
 const copyInviteBtn = document.getElementById('copyInviteBtn');
 const userList = document.getElementById('userList');
-const chatMessages = document.getElementById('chatMessages');
-const chatInput = document.getElementById('chatInput');
-const sendChatBtn = document.getElementById('sendChatBtn');
 const videoTitleElement = document.getElementById('videoTitle');
 const reconnectOverlay = document.getElementById('reconnectOverlay');
 const reconnectMessage = document.getElementById('reconnectMessage');
@@ -383,10 +401,6 @@ function initApp() {
         isHost = true;
         startHostHeartbeat();
     }
-    sendChatBtn.addEventListener('click', sendChatMessage);
-    chatInput.addEventListener('keypress', e => {
-        if (e.key === 'Enter') sendChatMessage();
-    });
     window.addEventListener('beforeunload', () => {
         const data = { type: 'USER_LEAVING' };
         Object.values(dataChannels).forEach(channel => {
@@ -873,43 +887,6 @@ const getUserColor = (userName) => {
     return userColors[Math.abs(hash % userColors.length)];
 };
 
-function sendChatMessage() {
-    const text = chatInput.value.trim();
-    if (text) {
-        const messageData = { type: 'CHAT_MESSAGE', text: text, sender: myName };
-        Object.values(dataChannels).forEach(channel => {
-            if (channel && channel.readyState === 'open') {
-                channel.send(JSON.stringify(messageData));
-            }
-        });
-        displayChatMessage(messageData);
-        chatInput.value = '';
-    }
-}
-
-function displayChatMessage({ text, sender }) {
-    const messageEl = document.createElement('div');
-    messageEl.classList.add('chat-message');
-    const avatarEl = document.createElement('div');
-    avatarEl.classList.add('avatar');
-    avatarEl.textContent = sender.charAt(0).toUpperCase();
-    avatarEl.style.backgroundColor = getUserColor(sender);
-    const messageBodyEl = document.createElement('div');
-    messageBodyEl.classList.add('message-body');
-    const senderEl = document.createElement('div');
-    senderEl.classList.add('sender');
-    senderEl.textContent = sender;
-    const textEl = document.createElement('div');
-    textEl.classList.add('message-text');
-    textEl.textContent = text;
-    messageBodyEl.appendChild(senderEl);
-    messageBodyEl.appendChild(textEl);
-    messageEl.appendChild(avatarEl);
-    messageEl.appendChild(messageBodyEl);
-    chatMessages.appendChild(messageEl);
-    chatMessages.scrollTop = chatMessages.scrollHeight;
-}
-
 function handleUserAction(data) {
     if (isHost) {
         broadcastData(data);
@@ -1198,9 +1175,6 @@ function handleReceivedData(data, senderId) {
             break;
         case 'USER_LIST':
             updateUserList(data.users);
-            break;
-        case 'CHAT_MESSAGE':
-            if (senderId !== 'local') displayChatMessage(data);
             break;
     }
 }

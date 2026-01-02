@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>YouTube Sync with Firebase</title>
     <link rel="icon" type="image/svg+xml" href="favicon.svg">
-    <link rel="stylesheet" href="styles.css?v=3.0.0">
+    <link rel="stylesheet" href="styles.css?v=3.1.0">
 </head>
 <body>
 
@@ -122,17 +122,13 @@
                 <div id="connectionStatus" class="status disconnected">Status: Disconnected</div>
             </div>
         </div>
-
-        <div class="chat-container sidebar-section">
-            <h3>Live Chat</h3>
-            <div class="chat-messages" id="chatMessages"></div>
-            <div class="chat-input-container">
-                <input type="text" id="chatInput" placeholder="Say something...">
-                <button id="sendChatBtn">Send</button>
-            </div>
-        </div>
     </div>
 </div>
+
+<!-- Cinema mode sidebar toggle button -->
+<button id="cinemaSidebarToggle" class="cinema-sidebar-toggle" aria-label="Toggle sidebar" title="Show search & queue">
+    <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="3" y1="12" x2="21" y2="12"></line><line x1="3" y1="6" x2="21" y2="6"></line><line x1="3" y1="18" x2="21" y2="18"></line></svg>
+</button>
 
 <!-- Transparent sensor to detect mouse movement near top in theater mode -->
 <div id="theaterHoverSensor" aria-hidden="true"></div>
@@ -151,7 +147,7 @@
 <script src="https://www.gstatic.com/firebasejs/9.6.7/firebase-functions-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/9.6.7/firebase-auth-compat.js"></script>
 <script src="https://www.youtube.com/iframe_api"></script>
-<script src="app.js?v=3.0.0"></script>
+<script src="app.js?v=3.1.0"></script>
 
 <!-- Reconnection overlay -->
 <div id="reconnectOverlay" class="reconnect-overlay hidden" aria-hidden="true">

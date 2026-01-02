@@ -631,78 +631,6 @@ button:disabled {
     border: 1px solid rgba(229, 160, 13, 0.3);
 }
 
-/* Chat */
-.chat-messages {
-    height: 250px;
-    overflow-y: auto;
-    background: var(--bg-tertiary);
-    border-radius: var(--radius-md);
-    padding: var(--space-md);
-    margin-bottom: var(--space-md);
-    display: flex;
-    flex-direction: column;
-    gap: var(--space-md);
-}
-
-.chat-message {
-    display: flex;
-    gap: var(--space-sm);
-}
-
-.avatar {
-    width: 32px;
-    height: 32px;
-    border-radius: 50%;
-    background: var(--accent);
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    font-size: 14px;
-    font-weight: 600;
-    flex-shrink: 0;
-}
-
-.message-body {
-    flex: 1;
-}
-
-.sender {
-    font-size: 13px;
-    font-weight: 600;
-    color: var(--accent);
-    margin-bottom: 2px;
-}
-
-.message-text {
-    font-size: 14px;
-    color: var(--text-primary);
-}
-
-.chat-input-container {
-    display: flex;
-    gap: var(--space-sm);
-}
-
-#chatInput {
-    flex: 1;
-    padding: 12px 16px;
-    background: var(--bg-tertiary);
-    border: 1px solid var(--border-color);
-    border-radius: var(--radius-full);
-    color: var(--text-primary);
-    font-size: 14px;
-}
-
-#chatInput:focus {
-    outline: none;
-    border-color: var(--accent);
-}
-
-#sendChatBtn {
-    padding: 12px 20px;
-    border-radius: var(--radius-full);
-}
-
 /* ================================================
    LAYOUT: CLASSIC (Default - Sidebar on right)
    ================================================ */
@@ -723,11 +651,6 @@ button:disabled {
     display: flex;
     flex-direction: column;
     gap: 0;
-}
-
-[data-layout="classic"] .chat-container {
-    grid-column: 1;
-    margin-top: var(--space-lg);
 }
 
 @media (max-width: 1024px) {
@@ -806,30 +729,16 @@ button:disabled {
 
 [data-layout="cinema"] .sidebar.open {
     transform: translateX(0);
+    display: block;
 }
 
-[data-layout="cinema"] .chat-container {
-    position: fixed;
-    bottom: 0;
-    left: 0;
-    right: 0;
-    background: var(--bg-secondary);
-    border-top: 1px solid var(--border-color);
-    padding: var(--space-md) var(--space-lg);
-    transform: translateY(100%);
-    transition: transform var(--transition-normal);
+/* Cinema sidebar toggle button */
+.cinema-sidebar-toggle {
+    display: none;
 }
 
-[data-layout="cinema"]:hover .chat-container {
-    transform: translateY(0);
-}
-
-[data-layout="cinema"] .chat-messages {
-    height: 120px;
-}
-
-/* Cinema toggle button for sidebar */
 [data-layout="cinema"] .cinema-sidebar-toggle {
+    display: flex;
     position: fixed;
     right: var(--space-lg);
     top: 50%;
@@ -839,9 +748,26 @@ button:disabled {
     padding: var(--space-md);
     border-radius: var(--radius-md);
     z-index: 60;
-    display: flex;
-    flex-direction: column;
-    gap: var(--space-sm);
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    transition: all var(--transition-fast);
+    opacity: 0.7;
+}
+
+[data-layout="cinema"] .cinema-sidebar-toggle:hover {
+    opacity: 1;
+    background: var(--accent);
+    border-color: var(--accent);
+}
+
+[data-layout="cinema"] .cinema-sidebar-toggle svg {
+    stroke: var(--text-primary);
+}
+
+[data-layout="cinema"] .sidebar.open + .cinema-sidebar-toggle,
+[data-layout="cinema"] .cinema-sidebar-toggle.active {
+    right: calc(360px + var(--space-lg));
 }
 
 /* ================================================
@@ -891,22 +817,6 @@ button:disabled {
     grid-column: 1 / -1;
 }
 
-[data-layout="streamline"] .chat-container {
-    background: var(--bg-secondary);
-    border: 1px solid var(--border-color);
-    border-radius: var(--radius-lg);
-    padding: var(--space-lg);
-}
-
-[data-layout="streamline"] .chat-container h3 {
-    margin: 0 0 var(--space-md);
-    font-size: 14px;
-    font-weight: 600;
-    color: var(--text-secondary);
-    text-transform: uppercase;
-    letter-spacing: 0.5px;
-}
-
 @media (max-width: 1200px) {
     [data-layout="streamline"] .main-content {
         grid-template-columns: 1fr;
@@ -943,7 +853,7 @@ body.theater-mode .player-container {
 body.theater-mode .player-controls,
 body.theater-mode .header,
 body.theater-mode .sidebar,
-body.theater-mode .chat-container { 
+body.theater-mode .cinema-sidebar-toggle { 
     display: none; 
 }
 
