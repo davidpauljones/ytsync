@@ -1,5 +1,5 @@
 // YouTube Party Sync - Main Application
-// Version: 3.1.3
+// Version: 3.1.4
 
 // --- LAYOUT SYSTEM ---
 const layoutToggle = document.getElementById('themeToggle');
@@ -402,6 +402,7 @@ function initApp() {
         })();
     } else {
         isHost = true;
+        document.body.classList.add('is-host');
         startHostHeartbeat();
     }
     window.addEventListener('beforeunload', () => {
@@ -584,6 +585,7 @@ function displayResults(videos) {
 createInviteBtn.addEventListener('click', async () => {
     if (!myAuthId) return alert("Cannot create party, not connected.");
     isHost = true;
+    document.body.classList.add('is-host');
     partyId = crypto.randomUUID();
     currentHostId = myAuthId;
     const url = `${window.location.href.split('?')[0]}?party=${partyId}`;
@@ -1331,6 +1333,7 @@ async function handleHostDisconnection() {
             await partyDocRef.update({ hostId: myAuthId });
             console.log("This client has successfully become the new host!");
             isHost = true;
+            document.body.classList.add('is-host');
             currentHostId = myAuthId;
             updateUIForNewHost();
             listenForGuests();
