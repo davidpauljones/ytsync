@@ -15,11 +15,17 @@ darkModeToggle.addEventListener('click', () => {
 });
 
 // --- CONFIGURATION ---
-// firebaseConfig is loaded from config.js (external file, gitignored)
-if (typeof firebaseConfig === 'undefined') {
-    console.error('Firebase config not found! Make sure config.js exists.');
-    alert('Configuration error: Please ensure config.js is present. See config.template.js for reference.');
-}
+// Firebase config - API key is safe to expose publicly
+// Security is enforced by Firestore rules and Firebase Authentication
+const firebaseConfig = {
+    apiKey: "AIzaSyActKLRV4ldSsS1dKNwkXXdKblnwG0s654",
+    authDomain: "partysync-17cd5.firebaseapp.com",
+    projectId: "partysync-17cd5",
+    storageBucket: "partysync-17cd5.appspot.com",
+    messagingSenderId: "294351433712",
+    appId: "1:294351433712:web:826470510443b924a6b735",
+    measurementId: "G-PF73SF4VGY"
+};
 
 // --- INITIALIZE FIREBASE ---
 const app = firebase.initializeApp(firebaseConfig);
