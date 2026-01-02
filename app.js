@@ -1,4 +1,5 @@
 // YouTube Party Sync - Main Application
+// Version: 2.0.0
 
 // --- DARK MODE LOGIC ---
 const darkModeToggle = document.getElementById('darkModeToggle');
