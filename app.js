@@ -1,10 +1,9 @@
 // YouTube Party Sync - Main Application
-// Version: 3.3.3
+// Version: 3.3.4
 
 // --- API QUOTA OPTIMIZATION ---
-// Cache for Up Next suggestions to avoid repeated API calls
-let upNextCache = { videoId: null, items: [], timestamp: 0 };
-const UPNEXT_CACHE_TTL = 5 * 60 * 1000; // 5 minutes cache
+// Cache last search results for Up Next (no API call needed!)
+let lastSearchResults = [];
 let lastSearchTime = 0;
 const SEARCH_COOLDOWN = 2000; // 2 second cooldown between searches
 
@@ -220,56 +219,26 @@ function hideUpNextOverlay() {
     upNextActive = false;
 }
 
-async function populateUpNextSuggestions() {
-    try {
-        if (!player || !player.getVideoData) return;
-        const data = player.getVideoData();
-        const title = data?.title || '';
-        const vid = data?.video_id || currentVideoId;
-        currentVideoId = vid || currentVideoId;
-
-        // Check cache - use cached results if same video and cache is fresh
-        const now = Date.now();
-        if (upNextCache.videoId === vid && upNextCache.items.length > 0 && 
-            (now - upNextCache.timestamp) < UPNEXT_CACHE_TTL) {
-            renderUpNextItems(upNextCache.items, vid);
-            return;
-        }
-
-        upNextList.innerHTML = '<div style="grid-column:1/-1;opacity:.8;">Loading suggestions…</div>';
-
-        // Call the Cloud Function to search by the current title (approximate related)
-        const searchYoutubeFunction = app.functions('us-central1').httpsCallable('searchYoutube');
-        const res = await searchYoutubeFunction({ query: title || 'YouTube' });
-        const items = (res.data?.items || [])
-            .map(it => {
-                const id = typeof it.id === 'object' ? it.id.videoId : it.id;
-                return {
-                    videoId: id,
-                    title: it.snippet?.title || '',
-                    channel: it.snippet?.channelTitle || '',
-                    thumb: it.snippet?.thumbnails?.medium?.url || it.snippet?.thumbnails?.default?.url
-                };
-            })
-            .filter(v => v.videoId && v.videoId !== vid)
-            .slice(0, 8);
-
-        if (!items.length) {
-            upNextList.innerHTML = '<div style="grid-column:1/-1;opacity:.8;">No suggestions found.</div>';
-            return;
-        }
-
-        // Cache the results
-        upNextCache = { videoId: vid, items: items, timestamp: Date.now() };
-        
-        renderUpNextItems(items, vid);
-    } catch (e) {
-        console.warn('Failed to load suggestions', e);
-        upNextList.innerHTML = '<div style="grid-column:1/-1;opacity:.8;">Failed to load suggestions.</div>';
+function populateUpNextSuggestions() {
+    // Use last search results instead of making API call - saves 100 quota units!
+    const vid = currentVideoId;
+    
+    // Filter out the current video from suggestions
+    const suggestions = lastSearchResults.filter(v => v.videoId && v.videoId !== vid).slice(0, 8);
+    
+    if (suggestions.length === 0) {
+        upNextList.innerHTML = `
+            <div style="grid-column:1/-1;text-align:center;opacity:.8;">
+                <p>No suggestions available.</p>
+                <p style="font-size:0.9em;margin-top:8px;">Search for videos to see suggestions here.</p>
+            </div>`;
+        return;
     }
+    
+    renderUpNextItems(suggestions, vid);
 }
 
-// Render Up Next items (used by cache and fresh results)
+// Render Up Next items from cached search results
 function renderUpNextItems(items, currentVid) {
     upNextList.innerHTML = '';
     for (const it of items) {
@@ -621,6 +590,23 @@ async function searchYouTube() {
 }
 
 function displayResults(items) {
+    // Cache video results for Up Next (filter out playlists)
+    const videoItems = items.filter(item => {
+        const isPlaylist = item.kind === 'youtube#playlist' || (item.id && item.id.kind === 'youtube#playlist');
+        return !isPlaylist;
+    }).map(item => {
+        const videoId = (typeof item.id === 'object') ? item.id.videoId : item.id;
+        return {
+            videoId: videoId,
+            title: item.snippet?.title || '',
+            channel: item.snippet?.channelTitle || '',
+            thumb: item.snippet?.thumbnails?.medium?.url || item.snippet?.thumbnails?.default?.url
+        };
+    });
+    if (videoItems.length > 0) {
+        lastSearchResults = videoItems;
+    }
+    
     resultsList.innerHTML = items.length ? '' : '<li>No results found.</li>';
     items.forEach(item => {
         // Determine if this is a video or playlist
