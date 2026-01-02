@@ -1005,11 +1005,14 @@ const getUserColor = (userName) => {
 };
 
 function handleUserAction(data) {
+    console.log('[DEBUG handleUserAction]', data.type, data);
     if (isHost) {
         // Never broadcast ENDED state - host handles video ending/queue progression separately
         if (data.type === 'STATE_CHANGE' && data.state === YT.PlayerState.ENDED) {
+            console.log('[DEBUG handleUserAction] Blocking ENDED broadcast');
             return;
         }
+        console.log('[DEBUG handleUserAction] Host broadcasting');
         broadcastData(data);
     } else {
         sendRequestToHost(data);
@@ -1303,17 +1306,21 @@ function handleReceivedData(data, senderId) {
             officialVideoDuration = data.duration;
             break;
         case 'NEW_VIDEO':
+            console.log('[DEBUG NEW_VIDEO]', { videoId: data.videoId, autoPlay: data.autoPlay, senderId });
             officialVideoDuration = 0;
             currentVideoId = data.videoId;
             hideUpNextOverlay();
             const currentPlayerVideoId = player.getVideoData?.()?.video_id;
+            console.log('[DEBUG NEW_VIDEO] currentPlayerVideoId:', currentPlayerVideoId);
             if (currentPlayerVideoId !== data.videoId) {
                 if (data.autoPlay) {
                     intentToAutoPlay = true;
                 }
+                console.log('[DEBUG NEW_VIDEO] Loading video:', data.videoId);
                 player.loadVideoById(data.videoId);
                 startBufferingWatchdog();
             } else if (data.autoPlay) {
+                console.log('[DEBUG NEW_VIDEO] Same video, playing');
                 player.playVideo();
                 startBufferingWatchdog();
             }
