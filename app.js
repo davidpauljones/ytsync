@@ -789,18 +789,22 @@ async function joinParty() {
 
     guestDocRef.onSnapshot(async (snapshot) => {
         const data = snapshot.data();
-        if (!data) return;
+        if (!data || !data.answer) return;
         // Apply the host's answer only once and only in have-local-offer state
-        if (data.answer && !pc._answerApplied && pc.signalingState === 'have-local-offer') {
-            try {
-                await pc.setRemoteDescription(new RTCSessionDescription(data.answer));
-                pc._answerApplied = true;
-                console.log('[JOIN] Set remote description (answer) from host');
-                candidateBuffer.forEach(c => pc.addIceCandidate(new RTCIceCandidate(c)).catch(err => console.error('[JOIN] addIceCandidate (buffer) failed:', err)));
-                candidateBuffer.length = 0;
-            } catch (e) {
-                console.error('[JOIN] Failed to set remote description:', e);
-            }
+        if (pc._answerApplied) return; // Already applied, skip
+        if (pc.signalingState !== 'have-local-offer') return; // Wrong state, skip silently
+        
+        // Set flag immediately to prevent race conditions with rapid snapshot fires
+        pc._answerApplied = true;
+        
+        try {
+            await pc.setRemoteDescription(new RTCSessionDescription(data.answer));
+            console.log('[JOIN] Set remote description (answer) from host');
+            candidateBuffer.forEach(c => pc.addIceCandidate(new RTCIceCandidate(c)).catch(err => console.error('[JOIN] addIceCandidate (buffer) failed:', err)));
+            candidateBuffer.length = 0;
+        } catch (e) {
+            console.error('[JOIN] Failed to set remote description:', e);
+            pc._answerApplied = false; // Reset on failure so it can retry
         }
     });
 
@@ -810,10 +814,8 @@ async function joinParty() {
                 const candidate = change.doc.data();
                 if (pc.currentRemoteDescription) {
                     pc.addIceCandidate(new RTCIceCandidate(candidate))
-                        .then(() => console.log('[JOIN] Added host ICE candidate'))
                         .catch(err => console.error('[JOIN] addIceCandidate failed:', err));
                 } else {
-                    console.log('[JOIN] Buffering host ICE candidate (no remote desc yet)');
                     candidateBuffer.push(candidate);
                 }
             }
