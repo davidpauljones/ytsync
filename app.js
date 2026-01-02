@@ -1,5 +1,5 @@
 // YouTube Party Sync - Main Application
-// Version: 3.3.4
+// Version: 3.3.5
 
 // --- API QUOTA OPTIMIZATION ---
 // Cache last search results for Up Next (no API call needed!)
@@ -525,6 +525,7 @@ function showSkipNotification(reason) {
 let playerReady = false;
 
 window.onYouTubeIframeAPIReady = () => {
+    console.log('[YT] YouTube IFrame API ready, creating player...');
     player = new YT.Player('player', {
         // Don't load a video initially - wait for user to search/select
         playerVars: {
@@ -534,7 +535,10 @@ window.onYouTubeIframeAPIReady = () => {
             origin: window.location.origin
         },
         events: {
-            'onReady': () => { playerReady = true; },
+            'onReady': () => { 
+                playerReady = true; 
+                console.log('[YT] Player ready!');
+            },
             'onStateChange': onPlayerStateChange,
             'onError': onPlayerError
         }
@@ -1314,9 +1318,12 @@ function handleReceivedData(data, senderId, retryCount = 0) {
     if (data.type.includes('VIDEO') || data.type === 'NEW_VIDEO' || data.type === 'INITIAL_SYNC' || data.type === 'STATE_CHANGE' || data.type === 'TIME_UPDATE') {
         if (!playerReady || !player || typeof player.loadVideoById !== 'function') {
             if (retryCount < 20) {
+                if (retryCount === 0 || retryCount === 5 || retryCount === 10 || retryCount === 15) {
+                    console.log(`[YT] Waiting for player... retry ${retryCount}/20, playerReady=${playerReady}, player=${!!player}, loadVideoById=${player ? typeof player.loadVideoById : 'N/A'}`);
+                }
                 setTimeout(() => handleReceivedData(data, senderId, retryCount + 1), 500);
             } else {
-                console.error(`[${data.type}] Player failed to initialize after 10 seconds`);
+                console.error(`[${data.type}] Player failed to initialize after 10 seconds - playerReady=${playerReady}, player=${!!player}, loadVideoById=${player ? typeof player.loadVideoById : 'N/A'}`);
             }
             return;
         }
