@@ -1,5 +1,5 @@
 // YouTube Party Sync - Main Application
-// Version: 3.2.2
+// Version: 3.2.3
 
 // --- LAYOUT SYSTEM ---
 const layoutToggle = document.getElementById('themeToggle');
@@ -1132,9 +1132,23 @@ function onPlayerStateChange(event) {
         currentVideoId,
     });
 
-    // Show "Up Next" immediately when video ends and queue is empty (before any early returns)
-    if (state === YT.PlayerState.ENDED && videoQueue.length === 0) {
-        if (!upNextActive) {
+    // Handle video ended - play next in queue or show suggestions
+    if (state === YT.PlayerState.ENDED) {
+        if (isHost && videoQueue.length > 0) {
+            console.log('[Queue] Video ended, playing next from queue...');
+            // If random play mode, shuffle queue before picking next video
+            if (randomPlayMode && videoQueue.length > 1) {
+                for (let i = videoQueue.length - 1; i > 0; i--) {
+                    const j = Math.floor(Math.random() * (i + 1));
+                    [videoQueue[i], videoQueue[j]] = [videoQueue[j], videoQueue[i]];
+                }
+            }
+            const nextVideo = videoQueue.shift();
+            hideUpNextOverlay();
+            broadcastData({ type: 'NEW_VIDEO', videoId: nextVideo.videoId, autoPlay: true });
+            broadcastData({ type: 'QUEUE_UPDATE', queue: videoQueue });
+            return;
+        } else if (videoQueue.length === 0 && !upNextActive) {
             console.log('[UpNext] ENDED with empty queue — showing overlay');
             showUpNextOverlay();
             setTimeout(() => populateUpNextSuggestions(), 0);
