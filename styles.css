@@ -504,12 +504,44 @@ button:disabled {
     background: var(--bg-tertiary);
 }
 
+/* Result thumbnail container */
+.result-thumbnail {
+    position: relative;
+    flex-shrink: 0;
+}
+
 #results img, #queueList img {
     width: 80px;
     height: 45px;
     object-fit: cover;
     border-radius: var(--radius-sm);
     flex-shrink: 0;
+}
+
+/* Playlist styling */
+#results li.playlist-item {
+    background: linear-gradient(135deg, rgba(var(--accent-rgb, 99, 102, 241), 0.1), transparent);
+    border: 1px solid rgba(var(--accent-rgb, 99, 102, 241), 0.3);
+}
+
+#results li.playlist-item:hover {
+    background: linear-gradient(135deg, rgba(var(--accent-rgb, 99, 102, 241), 0.2), var(--bg-tertiary));
+}
+
+.playlist-badge {
+    position: absolute;
+    bottom: 2px;
+    left: 2px;
+    right: 2px;
+    background: rgba(0, 0, 0, 0.85);
+    color: #fff;
+    font-size: 10px;
+    padding: 2px 4px;
+    border-radius: 2px;
+    text-align: center;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
 }
 
 .video-info {

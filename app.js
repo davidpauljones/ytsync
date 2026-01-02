@@ -1,5 +1,5 @@
 // YouTube Party Sync - Main Application
-// Version: 3.1.4
+// Version: 3.2.0
 
 // --- LAYOUT SYSTEM ---
 const layoutToggle = document.getElementById('themeToggle');
@@ -530,8 +530,8 @@ async function searchYouTube() {
         payload = { videoId: videoId };
         console.log("YouTube URL detected. Fetching by video ID:", videoId);
     } else {
-        // Otherwise, it's a regular search query.
-        payload = { query: query };
+        // Otherwise, it's a regular search query - search for both videos and playlists.
+        payload = { query: query, searchType: 'video,playlist' };
         console.log("Performing keyword search for:", query);
     }
 
@@ -548,30 +548,68 @@ async function searchYouTube() {
     }
 }
 
-function displayResults(videos) {
-    resultsList.innerHTML = videos.length ? '' : '<li>No videos found.</li>';
-    videos.forEach(video => {
-        // The video ID is in a different place depending on the API call.
-        // If video.id is an object, it's a search result. If not, it's a direct lookup.
-        const videoId = (typeof video.id === 'object') ? video.id.videoId : video.id;
+function displayResults(items) {
+    resultsList.innerHTML = items.length ? '' : '<li>No results found.</li>';
+    items.forEach(item => {
+        // Determine if this is a video or playlist
+        const isPlaylist = item.kind === 'youtube#playlist' || (item.id && item.id.kind === 'youtube#playlist');
+        
+        // Extract IDs based on type
+        let videoId = null;
+        let playlistId = null;
+        
+        if (isPlaylist) {
+            playlistId = item.id?.playlistId || item.id;
+        } else {
+            videoId = (typeof item.id === 'object') ? item.id.videoId : item.id;
+        }
 
-        const title = video.snippet.title;
-        const thumbnailUrl = video.snippet.thumbnails.default.url;
+        const title = item.snippet.title;
+        const thumbnailUrl = item.snippet.thumbnails?.default?.url || item.snippet.thumbnails?.medium?.url;
+        const itemCount = item.contentDetails?.itemCount;
 
         const li = document.createElement('li');
-        li.dataset.videoId = videoId;
-        li.innerHTML = `<img src="${thumbnailUrl}" alt="${video.title}"><div class="video-info"><div class="video-title" title="Play Now">${title}</div><button class="queue-btn">Add</button></div>`;
+        li.classList.add(isPlaylist ? 'playlist-item' : 'video-item');
+        
+        if (isPlaylist) {
+            li.dataset.playlistId = playlistId;
+            li.innerHTML = `
+                <div class="result-thumbnail">
+                    <img src="${thumbnailUrl}" alt="${title}">
+                    <span class="playlist-badge">📋 ${itemCount || ''} videos</span>
+                </div>
+                <div class="video-info">
+                    <div class="video-title" title="Load Playlist">${title}</div>
+                    <button class="queue-btn">Add All</button>
+                </div>`;
+        } else {
+            li.dataset.videoId = videoId;
+            li.innerHTML = `
+                <div class="result-thumbnail">
+                    <img src="${thumbnailUrl}" alt="${title}">
+                </div>
+                <div class="video-info">
+                    <div class="video-title" title="Play Now">${title}</div>
+                    <button class="queue-btn">Add</button>
+                </div>`;
+        }
 
         const clickableElements = [li.querySelector('img'), li.querySelector('.video-title')];
-        clickableElements.forEach(el => el.addEventListener('click', () => {
-            if (videoId) {
+        clickableElements.forEach(el => el.addEventListener('click', async () => {
+            if (isPlaylist && playlistId) {
+                // Load playlist and add all videos to queue
+                await loadPlaylistVideos(playlistId, true);
+            } else if (videoId) {
                 handleUserAction({ type: 'NEW_VIDEO', videoId: videoId, autoPlay: true });
             }
         }));
 
-        li.querySelector('.queue-btn').addEventListener('click', (e) => {
+        li.querySelector('.queue-btn').addEventListener('click', async (e) => {
             e.stopPropagation();
-            if (videoId) {
+            if (isPlaylist && playlistId) {
+                // Add all playlist videos to queue
+                await loadPlaylistVideos(playlistId, false);
+            } else if (videoId) {
                 const videoData = { videoId, title, thumbnailUrl };
                 handleUserAction({ type: 'ADD_TO_QUEUE', video: videoData });
             }
@@ -579,6 +617,45 @@ function displayResults(videos) {
 
         resultsList.appendChild(li);
     });
+}
+
+// Load playlist videos from YouTube API
+async function loadPlaylistVideos(playlistId, playFirst = false) {
+    try {
+        resultsList.innerHTML = '<li>Loading playlist...</li>';
+        const searchYoutubeFunction = app.functions('us-central1').httpsCallable('searchYoutube');
+        const result = await searchYoutubeFunction({ playlistId: playlistId });
+        
+        if (result.data.items && result.data.items.length > 0) {
+            const videos = result.data.items.map(item => ({
+                videoId: item.contentDetails?.videoId || item.snippet?.resourceId?.videoId,
+                title: item.snippet.title,
+                thumbnailUrl: item.snippet.thumbnails?.default?.url || item.snippet.thumbnails?.medium?.url
+            })).filter(v => v.videoId); // Filter out deleted videos
+            
+            if (playFirst && videos.length > 0) {
+                // Play first video immediately
+                handleUserAction({ type: 'NEW_VIDEO', videoId: videos[0].videoId, autoPlay: true });
+                // Add rest to queue
+                videos.slice(1).forEach(video => {
+                    handleUserAction({ type: 'ADD_TO_QUEUE', video: video });
+                });
+            } else {
+                // Add all to queue
+                videos.forEach(video => {
+                    handleUserAction({ type: 'ADD_TO_QUEUE', video: video });
+                });
+            }
+            
+            resultsList.innerHTML = `<li style="color: var(--accent);">✓ Added ${videos.length} videos from playlist</li>`;
+            setTimeout(() => searchYouTube(), 2000); // Refresh results after 2s
+        } else {
+            resultsList.innerHTML = '<li>Playlist is empty or unavailable.</li>';
+        }
+    } catch (error) {
+        console.error("Error loading playlist:", error);
+        resultsList.innerHTML = '<li>Failed to load playlist.</li>';
+    }
 }
 
 // --- WEBRTC & FIREBASE SIGNALING ---
