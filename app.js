@@ -1,5 +1,5 @@
 // YouTube Party Sync - Main Application
-// Version: 3.2.0
+// Version: 3.2.1
 
 // --- LAYOUT SYSTEM ---
 const layoutToggle = document.getElementById('themeToggle');
@@ -491,7 +491,39 @@ function onPlayerError(event) {
         101: 'Video cannot be embedded',
         150: 'Video cannot be embedded'
     };
-    console.error('[YouTube Error]', errorCodes[event.data] || `Unknown error code: ${event.data}`);
+    const errorMessage = errorCodes[event.data] || `Unknown error code: ${event.data}`;
+    console.error('[YouTube Error]', errorMessage);
+    
+    // Auto-skip to next video in queue if this one can't play
+    if (isHost && videoQueue.length > 0) {
+        console.log('[YouTube Error] Skipping to next video in queue...');
+        const nextVideo = videoQueue.shift();
+        broadcastData({ type: 'NEW_VIDEO', videoId: nextVideo.videoId, autoPlay: true });
+        broadcastData({ type: 'QUEUE_UPDATE', queue: videoQueue });
+        // Show brief notification
+        showSkipNotification(errorMessage);
+    } else if (isHost && videoQueue.length === 0) {
+        // No more videos, show up next overlay
+        console.log('[YouTube Error] No videos in queue, showing suggestions');
+        showUpNextOverlay();
+    }
+}
+
+// Show a brief notification when a video is skipped
+function showSkipNotification(reason) {
+    const notification = document.createElement('div');
+    notification.className = 'skip-notification';
+    notification.innerHTML = `<span>⚠️ Video skipped: ${reason}</span>`;
+    document.body.appendChild(notification);
+    
+    // Animate in
+    requestAnimationFrame(() => notification.classList.add('visible'));
+    
+    // Remove after 3 seconds
+    setTimeout(() => {
+        notification.classList.remove('visible');
+        setTimeout(() => notification.remove(), 300);
+    }, 3000);
 }
 
 window.onYouTubeIframeAPIReady = () => player = new YT.Player('player', {

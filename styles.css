@@ -1133,3 +1133,32 @@ body.theater-mode #theaterHoverSensor { display: block; }
         padding: var(--space-md);
     }
 }
+
+/* Skip Notification */
+.skip-notification {
+    position: fixed;
+    top: 80px;
+    left: 50%;
+    transform: translateX(-50%) translateY(-20px);
+    background: var(--bg-elevated);
+    border: 1px solid var(--warning);
+    border-radius: var(--radius-md);
+    padding: var(--space-sm) var(--space-lg);
+    color: var(--text-primary);
+    font-size: 14px;
+    z-index: 10000;
+    opacity: 0;
+    transition: opacity 0.3s ease, transform 0.3s ease;
+    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.5);
+}
+
+.skip-notification.visible {
+    opacity: 1;
+    transform: translateX(-50%) translateY(0);
+}
+
+.skip-notification span {
+    display: flex;
+    align-items: center;
+    gap: var(--space-sm);
+}
