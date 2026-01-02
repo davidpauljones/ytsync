@@ -1,5 +1,5 @@
 // YouTube Party Sync - Main Application
-// Version: 3.2.3
+// Version: 3.2.4
 
 // --- LAYOUT SYSTEM ---
 const layoutToggle = document.getElementById('themeToggle');
@@ -1134,6 +1134,7 @@ function onPlayerStateChange(event) {
 
     // Handle video ended - play next in queue or show suggestions
     if (state === YT.PlayerState.ENDED) {
+        console.log('[Queue] ENDED detected, isHost:', isHost, 'queueLen:', videoQueue.length);
         if (isHost && videoQueue.length > 0) {
             console.log('[Queue] Video ended, playing next from queue...');
             // If random play mode, shuffle queue before picking next video
@@ -1144,8 +1145,19 @@ function onPlayerStateChange(event) {
                 }
             }
             const nextVideo = videoQueue.shift();
+            console.log('[Queue] Next video:', nextVideo);
             hideUpNextOverlay();
-            broadcastData({ type: 'NEW_VIDEO', videoId: nextVideo.videoId, autoPlay: true });
+            // Directly load the video for host
+            currentVideoId = nextVideo.videoId;
+            intentToAutoPlay = true;
+            player.loadVideoById(nextVideo.videoId);
+            // Broadcast to guests
+            Object.entries(dataChannels).forEach(([id, channel]) => {
+                if (id !== 'host' && channel && channel.readyState === 'open') {
+                    channel.send(JSON.stringify({ type: 'NEW_VIDEO', videoId: nextVideo.videoId, autoPlay: true }));
+                }
+            });
+            // Update queue for everyone
             broadcastData({ type: 'QUEUE_UPDATE', queue: videoQueue });
             return;
         } else if (videoQueue.length === 0 && !upNextActive) {
@@ -1254,12 +1266,15 @@ function handleReceivedData(data, senderId) {
             officialVideoDuration = data.duration;
             break;
         case 'NEW_VIDEO':
+            console.log('[NEW_VIDEO] Received:', data, 'isHost:', isHost);
             officialVideoDuration = 0;
             // Track the app-selected video
             currentVideoId = data.videoId;
             hideUpNextOverlay();
-            if (player.getVideoData?.()?.video_id !== data.videoId) {
-                if (isHost && data.autoPlay) {
+            const currentPlayerVideoId = player.getVideoData?.()?.video_id;
+            console.log('[NEW_VIDEO] Current player video:', currentPlayerVideoId, 'Loading:', data.videoId);
+            if (currentPlayerVideoId !== data.videoId) {
+                if (data.autoPlay) {
                     intentToAutoPlay = true;
                 }
                 player.loadVideoById(data.videoId);
