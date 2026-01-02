@@ -3,17 +3,41 @@ rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
 
-    // This rule allows anyone with your Firestore database reference to view, edit,
-    // and delete all data in your Firestore database. It is useful for getting
-    // started, but it is configured to expire after 30 days because it
-    // leaves your app open to attackers. At that time, all client
-    // requests to your Firestore database will be denied.
-    //
-    // Make sure to write security rules for your app before that time, or else
-    // all client requests to your Firestore database will be denied until you Update
-    // your rules
+    // Party documents: authenticated users can read, only host can write
+    match /parties/{partyId} {
+      // Anyone authenticated can read party info
+      allow read: if request.auth != null;
+      
+      // Create: any authenticated user can create a new party
+      allow create: if request.auth != null 
+                    && request.resource.data.hostId == request.auth.uid;
+      
+      // Update/Delete: only the current host can modify
+      allow update, delete: if request.auth != null 
+                            && resource.data.hostId == request.auth.uid;
+      
+      // Guests subcollection: authenticated users can read/write their own guest doc
+      match /guests/{guestId} {
+        allow read: if request.auth != null;
+        allow create, update: if request.auth != null 
+                              && request.auth.uid == guestId;
+        allow delete: if request.auth != null 
+                      && (request.auth.uid == guestId 
+                          || get(/databases/$(database)/documents/parties/$(partyId)).data.hostId == request.auth.uid);
+        
+        // ICE candidates subcollections
+        match /guestCandidates/{candidateId} {
+          allow read, write: if request.auth != null;
+        }
+        match /hostCandidates/{candidateId} {
+          allow read, write: if request.auth != null;
+        }
+      }
+    }
+    
+    // Fallback: deny everything else
     match /{document=**} {
-      allow read, write: if request.time < timestamp.date(2025, 10, 3);
+      allow read, write: if false;
     }
   }
 }

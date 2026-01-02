@@ -1,0 +1,1345 @@
+// YouTube Party Sync - Main Application
+
+// --- DARK MODE LOGIC ---
+const darkModeToggle = document.getElementById('darkModeToggle');
+if (localStorage.getItem('theme') === 'dark') {
+    document.body.classList.add('dark');
+}
+darkModeToggle.addEventListener('click', () => {
+    document.body.classList.toggle('dark');
+    if (document.body.classList.contains('dark')) {
+        localStorage.setItem('theme', 'dark');
+    } else {
+        localStorage.setItem('theme', 'light');
+    }
+});
+
+// --- CONFIGURATION ---
+// firebaseConfig is loaded from config.js (external file, gitignored)
+if (typeof firebaseConfig === 'undefined') {
+    console.error('Firebase config not found! Make sure config.js exists.');
+    alert('Configuration error: Please ensure config.js is present. See config.template.js for reference.');
+}
+
+// --- INITIALIZE FIREBASE ---
+const app = firebase.initializeApp(firebaseConfig);
+const db = app.firestore();
+
+// --- DOM ELEMENTS ---
+const userModal = document.getElementById('userModal');
+const userNameInput = document.getElementById('userName');
+const setNameBtn = document.getElementById('setNameBtn');
+const nameError = document.getElementById('nameError');
+const mainContent = document.getElementById('mainContent');
+const searchButton = document.getElementById('searchButton');
+const searchInput = document.getElementById('searchInput');
+const searchSpinner = document.getElementById('searchSpinner');
+const resultsList = document.getElementById('results');
+const queueList = document.getElementById('queueList');
+const connectionStatus = document.getElementById('connectionStatus');
+const createInviteBtn = document.getElementById('createInviteBtn');
+const inviteLinkInput = document.getElementById('inviteLink');
+const inviteRow = document.getElementById('inviteRow');
+const copyInviteBtn = document.getElementById('copyInviteBtn');
+const userList = document.getElementById('userList');
+const chatMessages = document.getElementById('chatMessages');
+const chatInput = document.getElementById('chatInput');
+const sendChatBtn = document.getElementById('sendChatBtn');
+const videoTitleElement = document.getElementById('videoTitle');
+const reconnectOverlay = document.getElementById('reconnectOverlay');
+const reconnectMessage = document.getElementById('reconnectMessage');
+
+// --- APP STATE ---
+let myName = '';
+let player;
+let isHost = false;
+let partyId = '';
+let myAuthId = null;
+let currentHostId = '';
+const peerConnections = {};
+const dataChannels = {};
+let partyDocRef;
+let videoQueue = [];
+let lastPlayerState = -1;
+let officialVideoDuration = 0;
+let hostHeartbeatInterval;
+let lastUserActionTimestamp = 0;
+let intentToAutoPlay = false;
+let localUserList = {};
+
+// Track real user gestures to distinguish auto-pauses on hidden tabs
+let lastUserGestureAt = 0;
+['pointerdown', 'keydown', 'touchstart', 'click'].forEach(evt =>
+    document.addEventListener(evt, () => { lastUserGestureAt = Date.now(); }, { passive: true })
+);
+
+// Track the currently loaded videoId
+let currentVideoId = null;
+
+// WebRTC configuration (add TURN here for reliability)
+const rtcConfig = {
+    iceServers: [
+        { urls: ['stun:stun.l.google.com:19302', 'stun:stun1.l.google.com:19302', 'stun:stun2.l.google.com:19302'] },
+        // Add your TURN server (recommended for production)
+        // { urls: 'turn:YOUR_TURN_HOST:3478', username: 'TURN_USERNAME', credential: 'TURN_PASSWORD' },
+    ],
+    iceCandidatePoolSize: 2,
+};
+
+// Helpful mapping for logging YT state numbers
+const YT_STATE = {
+    [-1]: 'UNSTARTED',
+    [0]: 'ENDED',
+    [1]: 'PLAYING',
+    [2]: 'PAUSED',
+    [3]: 'BUFFERING',
+    [5]: 'CUED',
+};
+
+// Up Next overlay elements
+const upNextOverlay = document.getElementById('upNextOverlay');
+const upNextList = document.getElementById('upNextList');
+const upNextCloseBtn = document.getElementById('upNextCloseBtn');
+const upNextReplayBtn = document.getElementById('upNextReplayBtn');
+let upNextActive = false;
+
+// Also grab the container to toggle a helper class
+const playerContainer = document.querySelector('.player-container');
+
+// --- UP NEXT OVERLAY FUNCTIONS ---
+function showUpNextOverlay() {
+    // Move overlay to be last child to sit above everything
+    if (upNextOverlay.parentElement) {
+        upNextOverlay.parentElement.appendChild(upNextOverlay);
+    }
+    upNextOverlay.classList.add('active');
+    upNextOverlay.setAttribute('aria-hidden', 'false');
+    // Inline fallbacks in case of CSS specificity issues
+    upNextOverlay.style.opacity = '1';
+    upNextOverlay.style.pointerEvents = 'auto';
+    if (playerContainer) playerContainer.classList.add('overlay-active');
+    upNextActive = true;
+    console.log('[UpNext] Overlay shown');
+}
+
+function hideUpNextOverlay() {
+    upNextOverlay.classList.remove('active');
+    upNextOverlay.setAttribute('aria-hidden', 'true');
+    upNextOverlay.style.opacity = '';
+    upNextOverlay.style.pointerEvents = '';
+    if (playerContainer) playerContainer.classList.remove('overlay-active');
+    upNextActive = false;
+    console.log('[UpNext] Overlay hidden');
+}
+
+async function populateUpNextSuggestions() {
+    try {
+        if (!player || !player.getVideoData) return;
+        const data = player.getVideoData();
+        const title = data?.title || '';
+        const vid = data?.video_id || currentVideoId;
+        currentVideoId = vid || currentVideoId;
+
+        upNextList.innerHTML = '<div style="grid-column:1/-1;opacity:.8;">Loading suggestions…</div>';
+
+        // Call the Cloud Function to search by the current title (approximate related)
+        const searchYoutubeFunction = app.functions('us-central1').httpsCallable('searchYoutube');
+        const res = await searchYoutubeFunction({ query: title || 'YouTube' });
+        const items = (res.data?.items || [])
+            .map(it => {
+                const id = typeof it.id === 'object' ? it.id.videoId : it.id;
+                return {
+                    videoId: id,
+                    title: it.snippet?.title || '',
+                    channel: it.snippet?.channelTitle || '',
+                    thumb: it.snippet?.thumbnails?.medium?.url || it.snippet?.thumbnails?.default?.url
+                };
+            })
+            .filter(v => v.videoId && v.videoId !== vid)
+            .slice(0, 8);
+
+        if (!items.length) {
+            upNextList.innerHTML = '<div style="grid-column:1/-1;opacity:.8;">No suggestions found.</div>';
+            return;
+        }
+
+        upNextList.innerHTML = '';
+        for (const it of items) {
+            const card = document.createElement('div');
+            card.className = 'upnext-item';
+            card.setAttribute('role', 'button');
+            card.setAttribute('tabindex', '0');
+            card.setAttribute('aria-label', `Play ${it.title}`);
+            card.innerHTML = `
+                <img class="upnext-thumb" src="${it.thumb}" alt="">
+                <div class="upnext-info">
+                    <div class="upnext-title-line" title="${it.title}">${it.title}</div>
+                    <div class="upnext-meta" title="${it.channel}">${it.channel}</div>
+                </div>
+            `;
+            const playSelected = () => {
+                hideUpNextOverlay();
+                handleUserAction({ type: 'NEW_VIDEO', videoId: it.videoId, autoPlay: true });
+            };
+            card.addEventListener('click', playSelected);
+            card.addEventListener('keydown', (e) => {
+                if (e.key === 'Enter' || e.key === ' ') {
+                    e.preventDefault();
+                    playSelected();
+                }
+            });
+            upNextList.appendChild(card);
+        }
+    } catch (e) {
+        console.warn('Failed to load suggestions', e);
+        upNextList.innerHTML = '<div style="grid-column:1/-1;opacity:.8;">Failed to load suggestions.</div>';
+    }
+}
+
+upNextCloseBtn.addEventListener('click', hideUpNextOverlay);
+upNextReplayBtn.addEventListener('click', () => {
+    if (currentVideoId) {
+        hideUpNextOverlay();
+        handleUserAction({ type: 'NEW_VIDEO', videoId: currentVideoId, autoPlay: true });
+    }
+});
+
+// Intercept YouTube suggestion clicks that try to open a new tab and play them in-app instead
+(function installYouTubeOpenInterceptor() {
+    const originalOpen = window.open ? window.open.bind(window) : null;
+    function extractYouTubeVideoId(urlLike) {
+        try {
+            const urlStr = String(urlLike);
+            const re = /(?:v=|\/shorts\/|youtu\.be\/)([A-Za-z0-9_-]{11})/;
+            const m = urlStr.match(re);
+            if (m && m[1]) return m[1];
+            const u = new URL(urlStr, window.location.href);
+            const host = u.hostname.replace(/^www\./, '');
+            if (host.endsWith('youtu.be')) {
+                const parts = u.pathname.split('/').filter(Boolean);
+                if (parts[0] && parts[0].length === 11) return parts[0];
+            }
+            if (host.endsWith('youtube.com')) {
+                if (u.pathname.startsWith('/shorts/')) {
+                    const id = u.pathname.split('/')[2] || u.pathname.split('/')[1];
+                    if (id && id.length === 11) return id;
+                }
+                const v = u.searchParams.get('v');
+                if (v && v.length === 11) return v;
+            }
+        } catch (_) { /* ignore parsing errors */ }
+        return null;
+    }
+    window.open = function (url, target, features) {
+        const vid = extractYouTubeVideoId(url);
+        if (vid) {
+            try {
+                handleUserAction({ type: 'NEW_VIDEO', videoId: vid, autoPlay: true });
+                return null;
+            } catch (e) {
+                return originalOpen ? originalOpen(url, target, features) : null;
+            }
+        }
+        return originalOpen ? originalOpen(url, target, features) : null;
+    };
+})();
+
+// --- NAME VALIDATION ---
+function validateName(name) {
+    const trimmed = name.trim();
+    return trimmed.length >= 2 && trimmed.length <= 30;
+}
+
+userNameInput.addEventListener('input', () => {
+    const name = userNameInput.value.trim();
+    const valid = validateName(name);
+    if (nameError) {
+        nameError.classList.toggle('hidden', valid || name.length === 0);
+    }
+    setNameBtn.disabled = !valid || !myAuthId;
+});
+
+// --- AUTHENTICATION & APP START ---
+firebase.auth().onAuthStateChanged(user => {
+    if (user) {
+        myAuthId = user.uid;
+        console.log("User signed in with UID:", myAuthId);
+        // Re-check name validation
+        const name = userNameInput.value.trim();
+        setNameBtn.disabled = !validateName(name);
+    } else {
+        myAuthId = null;
+        setNameBtn.disabled = true;
+    }
+});
+
+setNameBtn.disabled = true;
+firebase.auth().signInAnonymously().catch((error) => {
+    console.error("Anonymous sign-in failed:", error);
+    alert("Could not connect to the service. Please refresh the page.");
+});
+
+// --- INITIALIZATION ---
+setNameBtn.addEventListener('click', () => {
+    const name = userNameInput.value.trim();
+    if (validateName(name) && myAuthId) {
+        myName = name;
+        userModal.classList.add('hidden');
+        mainContent.classList.remove('hidden');
+        initApp();
+    } else if (!validateName(name)) {
+        if (nameError) nameError.classList.remove('hidden');
+    } else {
+        alert('Could not verify connection. Please refresh the page.');
+    }
+});
+
+// Allow Enter key in name input
+userNameInput.addEventListener('keypress', (e) => {
+    if (e.key === 'Enter' && !setNameBtn.disabled) {
+        setNameBtn.click();
+    }
+});
+
+function initApp() {
+    const urlParams = new URLSearchParams(window.location.search);
+    partyId = urlParams.get('party');
+    if (partyId) {
+        isHost = false;
+        createInviteBtn.classList.add('hidden');
+        // Detect if you opened the guest link as the same signed-in user as the host
+        (async () => {
+            try {
+                const partySnap = await db.collection('parties').doc(partyId).get();
+                const hostIdFromDoc = partySnap.data()?.hostId;
+                if (hostIdFromDoc && hostIdFromDoc === myAuthId) {
+                    console.warn('[JOIN] Same UID as host. Use a different browser profile/incognito for the guest.');
+                    alert('You are joining with the same account as the host. Open the invite in a different browser or an incognito window so the guest has a different UID.');
+                }
+            } catch (e) {
+                console.warn('Could not verify hostId before joining:', e);
+            } finally {
+                joinParty();
+            }
+        })();
+    } else {
+        isHost = true;
+        startHostHeartbeat();
+    }
+    sendChatBtn.addEventListener('click', sendChatMessage);
+    chatInput.addEventListener('keypress', e => {
+        if (e.key === 'Enter') sendChatMessage();
+    });
+    window.addEventListener('beforeunload', () => {
+        const data = { type: 'USER_LEAVING' };
+        Object.values(dataChannels).forEach(channel => {
+            if (channel && channel.readyState === 'open') {
+                channel.send(JSON.stringify(data));
+            }
+        });
+    });
+}
+
+// --- THEATER MODE ---
+const theaterModeBtn = document.getElementById('theaterModeBtn');
+const theaterCloseBtn = document.getElementById('theaterCloseBtn');
+const theaterHoverSensor = document.getElementById('theaterHoverSensor');
+let theaterUiHideTimer;
+
+function showTheaterUiTemporarily(delayMs = 3000) {
+    document.body.classList.add('theater-ui-visible');
+    clearTimeout(theaterUiHideTimer);
+    theaterUiHideTimer = setTimeout(() => {
+        document.body.classList.remove('theater-ui-visible');
+    }, delayMs);
+}
+
+function theaterActivityPing() {
+    if (!document.body.classList.contains('theater-mode')) return;
+    showTheaterUiTemporarily();
+}
+
+function disableTheaterUi() {
+    clearTimeout(theaterUiHideTimer);
+    document.body.classList.remove('theater-ui-visible');
+    document.removeEventListener('mousemove', theaterActivityPing);
+    document.removeEventListener('keydown', theaterActivityPing);
+    document.removeEventListener('wheel', theaterActivityPing, { passive: true });
+    document.removeEventListener('touchstart', theaterActivityPing, { passive: true });
+    theaterHoverSensor.removeEventListener('mousemove', theaterActivityPing);
+    theaterHoverSensor.removeEventListener('mouseenter', theaterActivityPing);
+    theaterCloseBtn.removeEventListener('click', exitTheaterMode);
+}
+
+function enableTheaterUi() {
+    showTheaterUiTemporarily();
+    // Re-show on user activity (mouse over doc, top sensor, keys, wheel, touch)
+    document.addEventListener('mousemove', theaterActivityPing);
+    document.addEventListener('keydown', theaterActivityPing);
+    document.addEventListener('wheel', theaterActivityPing, { passive: true });
+    document.addEventListener('touchstart', theaterActivityPing, { passive: true });
+    theaterHoverSensor.addEventListener('mousemove', theaterActivityPing);
+    theaterHoverSensor.addEventListener('mouseenter', theaterActivityPing);
+    theaterCloseBtn.addEventListener('click', exitTheaterMode);
+}
+
+function exitTheaterMode() {
+    document.body.classList.remove('theater-mode');
+    theaterModeBtn.title = 'Theater Mode';
+    disableTheaterUi();
+}
+
+theaterModeBtn.addEventListener('click', () => {
+    document.body.classList.toggle('theater-mode');
+    const inTheaterMode = document.body.classList.contains('theater-mode');
+    theaterModeBtn.title = inTheaterMode ? 'Exit Theater Mode' : 'Theater Mode';
+    if (inTheaterMode) {
+        enableTheaterUi();
+    } else {
+        disableTheaterUi();
+    }
+});
+
+// Allow Esc to exit theater mode
+document.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape' && document.body.classList.contains('theater-mode')) {
+        exitTheaterMode();
+    }
+});
+
+// --- YOUTUBE API ---
+function onPlayerError(event) {
+    const errorCodes = {
+        2: 'Invalid video ID',
+        5: 'HTML5 player error',
+        100: 'Video not found (removed or private)',
+        101: 'Video cannot be embedded',
+        150: 'Video cannot be embedded'
+    };
+    console.error('[YouTube Error]', errorCodes[event.data] || `Unknown error code: ${event.data}`);
+}
+
+window.onYouTubeIframeAPIReady = () => player = new YT.Player('player', {
+    // Don't load a video initially - wait for user to search/select
+    playerVars: {
+        rel: 0,
+        playsinline: 1,
+        modestbranding: 1,
+        origin: window.location.origin
+    },
+    events: {
+        'onStateChange': onPlayerStateChange,
+        'onError': onPlayerError
+    }
+});
+
+searchButton.addEventListener('click', searchYouTube);
+searchInput.addEventListener('keypress', e => e.key === 'Enter' && searchYouTube());
+
+async function searchYouTube() {
+    const query = searchInput.value.trim();
+    if (!query) return;
+
+    // Show loading spinner
+    if (searchSpinner) searchSpinner.classList.remove('hidden');
+    resultsList.innerHTML = '<li>Searching...</li>';
+
+    // This regular expression checks for various YouTube URL formats and extracts the video ID.
+    const youtubeUrlRegex = /(?:https?:\/\/)?(?:www\.)?(?:youtube\.com\/(?:watch\?v=|embed\/)|youtu\.be\/)([\w-]{11})/;
+    const match = query.match(youtubeUrlRegex);
+
+    let payload = {};
+    if (match) {
+        // If it's a URL, the payload will contain the video ID.
+        const videoId = match[1];
+        payload = { videoId: videoId };
+        console.log("YouTube URL detected. Fetching by video ID:", videoId);
+    } else {
+        // Otherwise, it's a regular search query.
+        payload = { query: query };
+        console.log("Performing keyword search for:", query);
+    }
+
+    const searchYoutubeFunction = app.functions('us-central1').httpsCallable('searchYoutube');
+    try {
+        const result = await searchYoutubeFunction(payload);
+        displayResults(result.data.items || []);
+    } catch (error) {
+        console.error("Error calling Cloud Function:", error);
+        resultsList.innerHTML = '<li>Search failed. Please try again.</li>';
+    } finally {
+        // Hide loading spinner
+        if (searchSpinner) searchSpinner.classList.add('hidden');
+    }
+}
+
+function displayResults(videos) {
+    resultsList.innerHTML = videos.length ? '' : '<li>No videos found.</li>';
+    videos.forEach(video => {
+        // The video ID is in a different place depending on the API call.
+        // If video.id is an object, it's a search result. If not, it's a direct lookup.
+        const videoId = (typeof video.id === 'object') ? video.id.videoId : video.id;
+
+        const title = video.snippet.title;
+        const thumbnailUrl = video.snippet.thumbnails.default.url;
+
+        const li = document.createElement('li');
+        li.dataset.videoId = videoId;
+        li.innerHTML = `<img src="${thumbnailUrl}" alt="${video.title}"><div class="video-info"><div class="video-title" title="Play Now">${title}</div><button class="queue-btn">Add</button></div>`;
+
+        const clickableElements = [li.querySelector('img'), li.querySelector('.video-title')];
+        clickableElements.forEach(el => el.addEventListener('click', () => {
+            if (videoId) {
+                handleUserAction({ type: 'NEW_VIDEO', videoId: videoId, autoPlay: true });
+            }
+        }));
+
+        li.querySelector('.queue-btn').addEventListener('click', (e) => {
+            e.stopPropagation();
+            if (videoId) {
+                const videoData = { videoId, title, thumbnailUrl };
+                handleUserAction({ type: 'ADD_TO_QUEUE', video: videoData });
+            }
+        });
+
+        resultsList.appendChild(li);
+    });
+}
+
+// --- WEBRTC & FIREBASE SIGNALING ---
+createInviteBtn.addEventListener('click', async () => {
+    if (!myAuthId) return alert("Cannot create party, not connected.");
+    isHost = true;
+    partyId = crypto.randomUUID();
+    currentHostId = myAuthId;
+    const url = `${window.location.href.split('?')[0]}?party=${partyId}`;
+    inviteLinkInput.value = url;
+    // Show inline row with copy button
+    inviteRow.classList.remove('hidden');
+    copyInviteBtn.disabled = false;
+    copyInviteBtn.textContent = 'Copy';
+
+    createInviteBtn.disabled = true;
+    partyDocRef = db.collection('parties').doc(partyId);
+    try {
+        await partyDocRef.set({
+            hostId: myAuthId,
+            createdAt: firebase.firestore.FieldValue.serverTimestamp()
+        });
+        console.log('[HOST] Created party doc', partyId);
+    } catch (e) {
+        console.error('[HOST] Failed to create party doc:', e);
+        alert('Could not create party in Firestore. Check Firestore rules and console.');
+        return;
+    }
+    listenForGuests();
+    startHostHeartbeat();
+});
+
+async function joinParty() {
+    if (!myAuthId) return alert("Cannot join party, not connected.");
+    partyDocRef = db.collection('parties').doc(partyId);
+    const guestDocRef = partyDocRef.collection('guests').doc(myAuthId);
+    console.log('[JOIN] Starting joinParty for', myAuthId, 'party:', partyId);
+
+    const pc = createPeerConnection('host');
+    const candidateBuffer = [];
+    pc._answerApplied = false; // prevent duplicate setRemoteDescription
+
+    // Keep refs on the pc for ICE restarts
+    pc._guestDocRef = guestDocRef;
+    pc._guestGuestCandidatesRef = guestDocRef.collection('guestCandidates');
+    pc._guestHostCandidatesRef = guestDocRef.collection('hostCandidates');
+
+    dataChannels['host'] = pc.createDataChannel('sync-channel');
+    console.log('[JOIN] Created data channel to host');
+    configureDataChannel('host', dataChannels['host']);
+
+    const guestCandidatesRef = pc._guestGuestCandidatesRef;
+
+    pc.onicecandidate = async (event) => {
+        if (event.candidate) {
+            try {
+                await guestCandidatesRef.add(event.candidate.toJSON());
+                console.log('[JOIN] Sent guest ICE candidate');
+            } catch (e) {
+                console.error('[JOIN] Failed to write guest ICE candidate:', e);
+            }
+        } else {
+            console.log('[JOIN] ICE gathering complete');
+        }
+    };
+
+    try {
+        const offer = await pc.createOffer();
+        await pc.setLocalDescription(offer);
+        console.log('[JOIN] Created offer');
+        await guestDocRef.set({ offer, name: myName });
+        console.log('[JOIN] Wrote offer to Firestore');
+    } catch (e) {
+        console.error('[JOIN] Failed to create/send offer:', e);
+        alert('Could not join the party (offer failed). Check console for details.');
+        return;
+    }
+
+    guestDocRef.onSnapshot(async (snapshot) => {
+        const data = snapshot.data();
+        if (!data) return;
+        // Apply the host's answer only once and only in have-local-offer state
+        if (data.answer && !pc._answerApplied && pc.signalingState === 'have-local-offer') {
+            try {
+                await pc.setRemoteDescription(new RTCSessionDescription(data.answer));
+                pc._answerApplied = true;
+                console.log('[JOIN] Set remote description (answer) from host');
+                candidateBuffer.forEach(c => pc.addIceCandidate(new RTCIceCandidate(c)).catch(err => console.error('[JOIN] addIceCandidate (buffer) failed:', err)));
+                candidateBuffer.length = 0;
+            } catch (e) {
+                console.error('[JOIN] Failed to set remote description:', e);
+            }
+        }
+    });
+
+    pc._guestHostCandidatesRef.onSnapshot(snapshot => {
+        snapshot.docChanges().forEach(change => {
+            if (change.type === 'added') {
+                const candidate = change.doc.data();
+                if (pc.currentRemoteDescription) {
+                    pc.addIceCandidate(new RTCIceCandidate(candidate))
+                        .then(() => console.log('[JOIN] Added host ICE candidate'))
+                        .catch(err => console.error('[JOIN] addIceCandidate failed:', err));
+                } else {
+                    console.log('[JOIN] Buffering host ICE candidate (no remote desc yet)');
+                    candidateBuffer.push(candidate);
+                }
+            }
+        });
+    });
+}
+
+function listenForGuests() {
+    console.log('[HOST] Listening for guests on party', partyId);
+    partyDocRef.collection('guests').onSnapshot(async snapshot => {
+        for (const change of snapshot.docChanges()) {
+            const doc = change.doc;
+            const guestId = doc.id;
+            const data = doc.data() || {};
+            if (change.type === 'added') {
+                const { offer, name } = data;
+                console.log('[HOST] Guest added:', guestId, 'name:', name);
+                // If someone joins with same UID as the host, refuse (they share auth state)
+                if (guestId === myAuthId) {
+                    console.warn('[HOST] Ignoring guest with same UID as host. Use a different browser/incognito for guests.');
+                    continue;
+                }
+                if (peerConnections[guestId]) continue;
+
+                try {
+                    const guestDocRef = doc.ref;
+                    const pc = createPeerConnection(guestId, name);
+                    pc._hostGuestDocRef = guestDocRef;
+
+                    pc.ondatachannel = event => {
+                        console.log('[HOST] Data channel from guest', guestId);
+                        dataChannels[guestId] = event.channel;
+                        configureDataChannel(guestId, event.channel, name);
+                    };
+
+                    pc.onicecandidate = async (event) => {
+                        if (event.candidate) {
+                            try {
+                                await guestDocRef.collection('hostCandidates').add(event.candidate.toJSON());
+                                console.log('[HOST] Sent host ICE candidate to', guestId);
+                            } catch (e) {
+                                console.error('[HOST] Failed to write host ICE candidate:', e);
+                            }
+                        } else {
+                            console.log('[HOST] ICE gathering complete for', guestId);
+                        }
+                    };
+
+                    await pc.setRemoteDescription(new RTCSessionDescription(offer));
+                    console.log('[HOST] Set remote description (offer) from', guestId);
+                    const answer = await pc.createAnswer();
+                    await pc.setLocalDescription(answer);
+                    console.log('[HOST] Created answer for', guestId);
+                    await guestDocRef.update({ answer });
+                    console.log('[HOST] Wrote answer for', guestId);
+
+                    guestDocRef.collection('guestCandidates').onSnapshot(snap => {
+                        snap.docChanges().forEach(ch => {
+                            if (ch.type === 'added') {
+                                const cand = ch.doc.data();
+                                pc.addIceCandidate(new RTCIceCandidate(cand))
+                                    .then(() => console.log('[HOST] Added guest ICE candidate', guestId))
+                                    .catch(err => console.error('[HOST] addIceCandidate failed:', err));
+                            }
+                        });
+                    });
+                } catch (e) {
+                    console.error('[HOST] Error handling new guest', guestId, e);
+                }
+            } else if (change.type === 'modified') {
+                // Handle ICE-restart offers from guest
+                try {
+                    const pc = peerConnections[guestId];
+                    if (!pc) continue;
+                    if (data.offer && pc.signalingState !== 'have-remote-offer') {
+                        console.log('[HOST] Guest', guestId, 'sent ICE-restart offer; answering...');
+                        await pc.setRemoteDescription(new RTCSessionDescription(data.offer));
+                        const answer = await pc.createAnswer();
+                        await pc.setLocalDescription(answer);
+                        await doc.ref.update({ answer });
+                        console.log('[HOST] Wrote restart answer for', guestId);
+                    }
+                } catch (e) {
+                    console.error('[HOST] Failed to process modified guest doc:', guestId, e);
+                }
+            }
+        }
+    });
+}
+
+function createPeerConnection(peerId, peerName) {
+    const pc = new RTCPeerConnection(rtcConfig);
+    peerConnections[peerId] = pc;
+    pc.peerName = peerName;
+    pc.peerId = peerId;
+
+    let disconnectTimer = null;
+
+    pc.onconnectionstatechange = () => {
+        console.log(`[RTC:${peerId}] connectionState=`, pc.connectionState);
+        updateConnectionStatus();
+        if (pc.connectionState === 'failed') {
+            console.warn(`[RTC:${peerId}] DTLS failed. Attempting ICE restart (guest side only).`);
+            attemptGuestIceRestart(pc);
+        }
+        if (peerId === 'host' && !isHost) {
+            const state = pc.connectionState;
+            if (state === 'disconnected' || state === 'failed' || state === 'closed') {
+                console.warn(`Connection to host lost. State: ${state}`);
+                if (!window.migrationInProgress && state !== 'disconnected') {
+                    window.migrationInProgress = true;
+                    handleHostDisconnection();
+                }
+            }
+        }
+    };
+    pc.oniceconnectionstatechange = () => {
+        console.log(`[RTC:${peerId}] iceConnectionState=`, pc.iceConnectionState);
+        if (pc.iceConnectionState === 'disconnected') {
+            clearTimeout(disconnectTimer);
+            disconnectTimer = setTimeout(() => {
+                if (pc.iceConnectionState === 'disconnected') {
+                    console.warn(`[RTC:${peerId}] Still disconnected; attempting ICE restart (guest side only).`);
+                    attemptGuestIceRestart(pc);
+                }
+            }, 2000);
+        } else if (pc.iceConnectionState === 'failed') {
+            console.warn(`[RTC:${peerId}] ICE failed. You likely need a TURN server.`);
+        } else if (pc.iceConnectionState === 'connected' || pc.iceConnectionState === 'completed') {
+            clearTimeout(disconnectTimer);
+        }
+    };
+    pc.onsignalingstatechange = () => console.log(`[RTC:${peerId}] signalingState=`, pc.signalingState);
+    pc.onicegatheringstatechange = () => console.log(`[RTC:${peerId}] iceGatheringState=`, pc.iceGatheringState);
+    return pc;
+}
+
+// Guest-side ICE restart helper
+async function attemptGuestIceRestart(pc) {
+    // Only guests restart toward the host
+    if (isHost || pc.peerId !== 'host') return;
+    if (!pc._guestDocRef) return;
+    if (pc._iceRestartInProgress) {
+        console.log('[JOIN] ICE restart already in progress; skipping.');
+        return;
+    }
+    if (pc.signalingState === 'closed') {
+        console.warn('[JOIN] ICE restart skipped; connection already closed.');
+        return;
+    }
+    pc._iceRestartInProgress = true;
+    try {
+        console.log('[JOIN] Attempting ICE restart...');
+        // Do NOT clear candidate subcollections (avoid permission issues).
+        // Create a new offer with iceRestart
+        const offer = await pc.createOffer({ iceRestart: true });
+        await pc.setLocalDescription(offer);
+        // Clear old answer so host will respond with a fresh answer
+        await pc._guestDocRef.update({
+            offer,
+            restartedAt: Date.now(),
+            answer: firebase.firestore.FieldValue.delete()
+        });
+        console.log('[JOIN] Wrote restart offer');
+    } catch (e) {
+        console.error('[JOIN] ICE restart failed:', e);
+    } finally {
+        pc._iceRestartInProgress = false;
+    }
+}
+
+// Utility: delete all docs in a subcollection (candidates)
+async function clearCollection(colRef) {
+    try {
+        const snap = await colRef.get();
+        if (snap.empty) return;
+        const batch = db.batch();
+        snap.forEach(doc => batch.delete(doc.ref));
+        await batch.commit();
+    } catch (e) {
+        console.warn('clearCollection failed:', e);
+    }
+}
+
+function resetPartyState() {
+    console.log("Resetting party state...");
+    for (const peerId in peerConnections) {
+        if (peerConnections[peerId]) {
+            peerConnections[peerId].close();
+        }
+    }
+    Object.keys(peerConnections).forEach(key => delete peerConnections[key]);
+    Object.keys(dataChannels).forEach(key => delete dataChannels[key]);
+    userList.innerHTML = '';
+    localUserList = {};
+    window.migrationInProgress = false;
+}
+
+const userColors = ['#ff7675', '#74b9ff', '#55efc4', '#ffeaa7', '#a29bfe', '#fd79a8', '#00cec9', '#fab1a0'];
+const getUserColor = (userName) => {
+    let hash = 0;
+    for (let i = 0; i < userName.length; i++) {
+        hash = userName.charCodeAt(i) + ((hash << 5) - hash);
+    }
+    return userColors[Math.abs(hash % userColors.length)];
+};
+
+function sendChatMessage() {
+    const text = chatInput.value.trim();
+    if (text) {
+        const messageData = { type: 'CHAT_MESSAGE', text: text, sender: myName };
+        Object.values(dataChannels).forEach(channel => {
+            if (channel && channel.readyState === 'open') {
+                channel.send(JSON.stringify(messageData));
+            }
+        });
+        displayChatMessage(messageData);
+        chatInput.value = '';
+    }
+}
+
+function displayChatMessage({ text, sender }) {
+    const messageEl = document.createElement('div');
+    messageEl.classList.add('chat-message');
+    const avatarEl = document.createElement('div');
+    avatarEl.classList.add('avatar');
+    avatarEl.textContent = sender.charAt(0).toUpperCase();
+    avatarEl.style.backgroundColor = getUserColor(sender);
+    const messageBodyEl = document.createElement('div');
+    messageBodyEl.classList.add('message-body');
+    const senderEl = document.createElement('div');
+    senderEl.classList.add('sender');
+    senderEl.textContent = sender;
+    const textEl = document.createElement('div');
+    textEl.classList.add('message-text');
+    textEl.textContent = text;
+    messageBodyEl.appendChild(senderEl);
+    messageBodyEl.appendChild(textEl);
+    messageEl.appendChild(avatarEl);
+    messageEl.appendChild(messageBodyEl);
+    chatMessages.appendChild(messageEl);
+    chatMessages.scrollTop = chatMessages.scrollHeight;
+}
+
+function handleUserAction(data) {
+    if (isHost) {
+        broadcastData(data);
+    } else {
+        sendRequestToHost(data);
+    }
+}
+
+function sendRequestToHost(data) {
+    if (isHost) return;
+
+    if (data.type === 'STATE_CHANGE') {
+        // Do not forward pauses caused by hidden tab (not user initiated)
+        if ((data.state === YT.PlayerState.PAUSED || data.state === YT.PlayerState.ENDED) &&
+            document.hidden && !data.userInitiated) {
+            console.log('Suppressing pause from hidden/inactive tab.');
+            return;
+        }
+
+        // Keep ad/buffer suppression for non-pause states
+        if (data.state !== YT.PlayerState.PAUSED && data.state !== YT.PlayerState.ENDED) {
+            if (officialVideoDuration > 0) {
+                const currentDuration = typeof player.getDuration === 'function' ? player.getDuration() : 0;
+                if (currentDuration === 0 || Math.abs(currentDuration - officialVideoDuration) > 2) {
+                    console.log("Ad/buffer detected. Suppressing non-pause request to host.");
+                    return;
+                }
+            }
+        }
+    }
+
+    const requestData = { ...data, type: `REQUEST_${data.type}` };
+    const hostChannel = dataChannels['host'];
+    if (hostChannel && hostChannel.readyState === 'open') {
+        hostChannel.send(JSON.stringify(requestData));
+    } else {
+        console.warn("Host channel not open; cannot send request.");
+    }
+}
+
+function broadcastData(data) {
+    handleReceivedData(data, 'local');
+    Object.entries(dataChannels).forEach(([id, channel]) => {
+        if (id !== 'host' && channel && channel.readyState === 'open') {
+            channel.send(JSON.stringify(data));
+        }
+    });
+}
+
+function configureDataChannel(peerId, channel, peerName = '') {
+    channel.onopen = () => {
+        console.log(`[DC:${peerId}] open`);
+        window.migrationInProgress = false;
+        // Hide reconnection overlay if shown
+        if (reconnectOverlay) reconnectOverlay.classList.add('hidden');
+        updateConnectionStatus();
+        if (isHost) {
+            const users = { [myAuthId]: { name: myName } };
+            Object.entries(peerConnections).forEach(([id, pc]) => {
+                if (pc.peerName) users[id] = { name: pc.peerName };
+            });
+            broadcastData({ type: 'USER_LIST', users });
+            channel.send(JSON.stringify({ type: 'HOST_INFO', hostId: myAuthId }));
+            if (player && player.getPlayerState && player.getPlayerState() !== YT.PlayerState.UNSTARTED && player.getVideoData().video_id) {
+                const syncData = { type: 'INITIAL_SYNC', videoId: player.getVideoData().video_id, time: player.getCurrentTime(), state: player.getPlayerState(), duration: player.getDuration(), queue: videoQueue };
+                channel.send(JSON.stringify(syncData));
+            } else {
+                broadcastData({ type: 'QUEUE_UPDATE', queue: videoQueue });
+            }
+        }
+    };
+    channel.onclose = () => {
+        console.log(`[DC:${peerId}] close`);
+        if (peerId === 'host' && !isHost && !window.migrationInProgress) {
+            window.migrationInProgress = true;
+            handleHostDisconnection();
+            return;
+        }
+        if (isHost && partyDocRef) {
+            partyDocRef.collection('guests').doc(peerId).delete().catch(error => console.error("Error removing guest document:", error));
+        }
+        delete peerConnections[peerId];
+        delete dataChannels[peerId];
+        updateConnectionStatus();
+        if (isHost) {
+            const users = { [myAuthId]: { name: myName } };
+            Object.entries(peerConnections).forEach(([id, pc]) => {
+                if (pc.peerName) users[id] = { name: pc.peerName };
+            });
+            broadcastData({ type: 'USER_LIST', users });
+        }
+    };
+    channel.onmessage = event => {
+        try { handleReceivedData(JSON.parse(event.data), peerId); }
+        catch (e) { console.error(`[DC:${peerId}] bad message`, e, event.data); }
+    };
+}
+
+function onPlayerStateChange(event) {
+    const state = event.data;
+    console.log('[YT] onPlayerStateChange:', state, `(${YT_STATE[state] || 'UNKNOWN'})`, {
+        queueLen: videoQueue.length,
+        hidden: document.hidden,
+        currentVideoId,
+    });
+
+    // Show "Up Next" immediately when video ends and queue is empty (before any early returns)
+    if (state === YT.PlayerState.ENDED && videoQueue.length === 0) {
+        if (!upNextActive) {
+            console.log('[UpNext] ENDED with empty queue — showing overlay');
+            showUpNextOverlay();
+            setTimeout(() => populateUpNextSuggestions(), 0);
+        }
+    }
+
+    // Only hide overlay when playback resumes
+    if (state === YT.PlayerState.PLAYING) {
+        updateVideoTitle();
+        hideUpNextOverlay();
+    } else if (state === YT.PlayerState.CUED) {
+        updateVideoTitle();
+    }
+
+    if (isHost && intentToAutoPlay && state === YT.PlayerState.CUED) {
+        intentToAutoPlay = false;
+        handleUserAction({ type: 'STATE_CHANGE', state: YT.PlayerState.PLAYING, time: 0, userInitiated: true });
+        return;
+    }
+
+    // Detect in-iframe selection (e.g., end-screen click that navigates inside iframe)
+    try {
+        const vid = (player && typeof player.getVideoData === 'function') ? player.getVideoData().video_id : null;
+        if (vid && currentVideoId && vid !== currentVideoId) {
+            console.log('[YT] Detected in-iframe selection of new video:', vid);
+            currentVideoId = vid;
+            handleUserAction({ type: 'NEW_VIDEO', videoId: vid, autoPlay: true });
+            return;
+        }
+    } catch (_) { /* ignore */ }
+
+    // Ignore pure buffering
+    if (state === YT.PlayerState.BUFFERING) return;
+
+    // Suppress duplicate states EXCEPT allow ENDED to still propagate once (overlay handled above)
+    if (state !== YT.PlayerState.ENDED && state === lastPlayerState) return;
+
+    lastPlayerState = state;
+
+    const userInitiated = (Date.now() - lastUserGestureAt) < 1500;
+
+    if ((state === YT.PlayerState.PAUSED || state === YT.PlayerState.ENDED) &&
+        document.hidden && !userInitiated) {
+        console.log('[YT] Ignoring auto-pause from hidden/inactive tab.');
+        return;
+    }
+
+    if (userInitiated) {
+        lastUserActionTimestamp = Date.now();
+    }
+
+    if (isHost && state === YT.PlayerState.PLAYING) {
+        const duration = player.getDuration();
+        if (Math.abs(duration - officialVideoDuration) > 1) {
+            officialVideoDuration = duration;
+            broadcastData({ type: 'VIDEO_DURATION', duration: duration });
+        }
+    }
+
+    const actionData = { type: 'STATE_CHANGE', state, time: player.getCurrentTime(), userInitiated };
+    handleUserAction(actionData);
+}
+
+function handleReceivedData(data, senderId) {
+    // For video-related commands, ensure player is ready (retry if not)
+    if (data.type.includes('VIDEO') || data.type === 'NEW_VIDEO' || data.type === 'INITIAL_SYNC' || data.type === 'STATE_CHANGE' || data.type === 'TIME_UPDATE') {
+        if (!player || typeof player.loadVideoById !== 'function') {
+            console.warn(`[${data.type}] Player not ready yet, retrying in 500ms...`);
+            setTimeout(() => handleReceivedData(data, senderId), 500);
+            return;
+        }
+    }
+    if (isHost && data.type.startsWith('REQUEST_')) {
+        const commandData = { ...data, type: data.type.replace('REQUEST_', '') };
+        broadcastData(commandData);
+        return;
+    }
+    switch (data.type) {
+        case 'HOST_INFO':
+            currentHostId = data.hostId;
+            break;
+        case 'INITIAL_SYNC':
+            officialVideoDuration = data.duration;
+            if (player.getVideoData()?.video_id !== data.videoId) {
+                player.loadVideoById(data.videoId, data.time);
+            } else {
+                player.seekTo(data.time, true);
+            }
+            // Track the synced video
+            currentVideoId = data.videoId;
+            hideUpNextOverlay();
+            setTimeout(() => {
+                if (data.state === YT.PlayerState.PLAYING) player.playVideo();
+                else if (data.state === YT.PlayerState.PAUSED) player.pauseVideo();
+            }, 1000);
+            videoQueue = data.queue;
+            updateQueueUI();
+            break;
+        case 'VIDEO_DURATION':
+            officialVideoDuration = data.duration;
+            break;
+        case 'NEW_VIDEO':
+            officialVideoDuration = 0;
+            // Track the app-selected video
+            currentVideoId = data.videoId;
+            hideUpNextOverlay();
+            if (player.getVideoData?.()?.video_id !== data.videoId) {
+                if (isHost && data.autoPlay) {
+                    intentToAutoPlay = true;
+                }
+                player.loadVideoById(data.videoId);
+            } else if (data.autoPlay) {
+                player.playVideo();
+            }
+            break;
+        case 'STATE_CHANGE': {
+            lastPlayerState = data.state;
+            if (data.state === YT.PlayerState.PLAYING) {
+                const timeDifference = Math.abs(player.getCurrentTime() - data.time);
+                if (timeDifference > 1.5) {
+                    console.log(`Resyncing: Time difference of ${timeDifference.toFixed(2)}s is too large.`);
+                    player.seekTo(data.time, true);
+                }
+                player.playVideo();
+            } else if (data.state === YT.PlayerState.PAUSED || data.state === YT.PlayerState.ENDED) {
+                player.pauseVideo();
+            }
+            break;
+        }
+        case 'TIME_UPDATE':
+            if (!isHost) {
+                if (Date.now() - lastUserActionTimestamp < 3000) break;
+                const localTime = player.getCurrentTime();
+                const localState = player.getPlayerState();
+                const timeDifference = Math.abs(localTime - data.time);
+                if (data.state === YT.PlayerState.PLAYING && (localState !== YT.PlayerState.PLAYING || timeDifference > 3.5)) {
+                    const currentDuration = player.getDuration();
+                    if (officialVideoDuration > 0 && Math.abs(currentDuration - officialVideoDuration) > 2) {
+                        break;
+                    }
+                    player.seekTo(data.time, true);
+                    player.playVideo();
+                }
+                else if (data.state === YT.PlayerState.PAUSED && localState !== YT.PlayerState.PAUSED) {
+                    console.log("Heartbeat correcting to PAUSED state.");
+                    player.pauseVideo();
+                }
+            }
+            break;
+        case 'ADD_TO_QUEUE':
+            if (isHost) {
+                videoQueue.push(data.video);
+                broadcastData({ type: 'QUEUE_UPDATE', queue: videoQueue });
+            }
+            break;
+        case 'PLAY_FROM_QUEUE':
+            if (isHost && videoQueue[data.index]) {
+                const videoToPlay = videoQueue.splice(data.index, 1)[0];
+                broadcastData({ type: 'NEW_VIDEO', videoId: videoToPlay.videoId, autoPlay: true });
+                broadcastData({ type: 'QUEUE_UPDATE', queue: videoQueue });
+            }
+            break;
+        case 'REMOVE_FROM_QUEUE':
+            if (isHost) {
+                videoQueue.splice(data.index, 1);
+                broadcastData({ type: 'QUEUE_UPDATE', queue: videoQueue });
+            }
+            break;
+        case 'USER_LEAVING':
+            if (isHost && peerConnections[senderId]) {
+                peerConnections[senderId].close();
+            }
+            break;
+        case 'QUEUE_UPDATE':
+            videoQueue = data.queue;
+            updateQueueUI();
+            break;
+        case 'USER_LIST':
+            updateUserList(data.users);
+            break;
+        case 'CHAT_MESSAGE':
+            if (senderId !== 'local') displayChatMessage(data);
+            break;
+    }
+}
+
+// Copy invite link handler
+copyInviteBtn.addEventListener('click', async () => {
+    const link = inviteLinkInput.value;
+    if (!link) return;
+    try {
+        await navigator.clipboard.writeText(link);
+        copyInviteBtn.textContent = 'Copied!';
+        setTimeout(() => (copyInviteBtn.textContent = 'Copy'), 1500);
+    } catch (err) {
+        // Fallback for non-secure contexts
+        inviteLinkInput.select();
+        inviteLinkInput.setSelectionRange(0, link.length);
+        const success = document.execCommand && document.execCommand('copy');
+        copyInviteBtn.textContent = success ? 'Copied!' : 'Copy failed';
+        setTimeout(() => (copyInviteBtn.textContent = 'Copy'), 1500);
+        if (window.getSelection) window.getSelection().removeAllRanges();
+    }
+});
+
+function startHostHeartbeat() {
+    if (hostHeartbeatInterval) clearInterval(hostHeartbeatInterval);
+    hostHeartbeatInterval = setInterval(() => {
+        if (isHost && player && typeof player.getCurrentTime === 'function') {
+            const currentState = player.getPlayerState();
+            if (currentState === YT.PlayerState.ENDED && videoQueue.length > 0) {
+                const nextVideo = videoQueue.shift();
+                hideUpNextOverlay();
+                broadcastData({ type: 'NEW_VIDEO', videoId: nextVideo.videoId, autoPlay: true });
+                broadcastData({ type: 'QUEUE_UPDATE', queue: videoQueue });
+                return;
+            }
+            const data = { type: 'TIME_UPDATE', time: player.getCurrentTime(), state: currentState };
+            Object.entries(dataChannels).forEach(([id, channel]) => {
+                if (id !== 'host' && channel && channel.readyState === 'open') {
+                    channel.send(JSON.stringify(data));
+                }
+            });
+        }
+    }, 1500);
+}
+
+async function handleHostDisconnection() {
+    // Show reconnection overlay
+    if (reconnectOverlay) {
+        reconnectOverlay.classList.remove('hidden');
+        if (reconnectMessage) reconnectMessage.textContent = 'Host disconnected, electing new host...';
+    }
+
+    resetPartyState();
+    console.log("Host disconnected. Starting election...");
+    connectionStatus.textContent = 'Status: Host disconnected, electing new host...';
+    connectionStatus.className = 'status connecting';
+    if (hostHeartbeatInterval) clearInterval(hostHeartbeatInterval);
+
+    const remainingClientIds = Object.keys(localUserList);
+    if (!remainingClientIds.includes(myAuthId)) {
+        remainingClientIds.push(myAuthId);
+    }
+    remainingClientIds.sort();
+
+    if (remainingClientIds.length === 0) {
+        console.log("Party is empty after host left.");
+        if (reconnectOverlay) reconnectOverlay.classList.add('hidden');
+        return;
+    }
+
+    const newHostId = remainingClientIds[0];
+    console.log("Election determined. New host should be:", newHostId);
+
+    if (myAuthId === newHostId) {
+        try {
+            const guestsSnapshot = await partyDocRef.collection('guests').get();
+            const batch = db.batch();
+            guestsSnapshot.docs.forEach(doc => batch.delete(doc.ref));
+            await batch.commit();
+            console.log("Cleared old guest list from Firestore.");
+
+            await partyDocRef.update({ hostId: myAuthId });
+            console.log("This client has successfully become the new host!");
+            isHost = true;
+            currentHostId = myAuthId;
+            updateUIForNewHost();
+            listenForGuests();
+            startHostHeartbeat();
+            broadcastData({ type: 'USER_LIST', users: localUserList });
+
+            // Hide reconnection overlay
+            if (reconnectOverlay) reconnectOverlay.classList.add('hidden');
+
+        } catch (error) {
+            console.error("Error trying to become host:", error);
+            alert("Could not elect new host. Please refresh the page.");
+            if (reconnectOverlay) reconnectOverlay.classList.add('hidden');
+        }
+    } else {
+        console.log("Waiting for the new host to take over.");
+        if (reconnectMessage) reconnectMessage.textContent = 'Reconnecting to new host...';
+        listenForNewHostAndReconnect();
+    }
+}
+
+function listenForNewHostAndReconnect() {
+    const unsubscribe = partyDocRef.onSnapshot(doc => {
+        if (!doc.exists) return;
+        const newHostId = doc.data().hostId;
+        if (newHostId && newHostId !== myAuthId && newHostId !== currentHostId) {
+            console.log(`New host detected (${newHostId}). Reconnecting...`);
+            unsubscribe();
+            currentHostId = newHostId;
+            joinParty();
+        }
+    });
+}
+
+function updateUIForNewHost() {
+    createInviteBtn.classList.remove('hidden');
+    createInviteBtn.disabled = true;
+    updateUserList(localUserList);
+    updateConnectionStatus();
+}
+
+function updateVideoTitle() {
+    if (player && typeof player.getVideoData === 'function') {
+        const title = player.getVideoData().title;
+        if (title) {
+            videoTitleElement.textContent = title;
+            videoTitleElement.title = title;
+        }
+    }
+}
+
+function updateQueueUI() {
+    queueList.innerHTML = '';
+    if (videoQueue.length === 0) {
+        queueList.innerHTML = '<li>Queue is empty.</li>';
+        return;
+    }
+    videoQueue.forEach((video, index) => {
+        const li = document.createElement('li');
+        li.title = "Click to Play Now";
+        li.innerHTML = `<img src="${video.thumbnailUrl}" alt="${video.title}"><div class="video-info"><div class="video-title">${video.title}</div><button class="remove-btn" title="Remove from queue" data-index="${index}">Remove</button></div>`;
+        li.addEventListener('click', (e) => {
+            if (e.target.classList.contains('remove-btn')) return;
+            handleUserAction({ type: 'PLAY_FROM_QUEUE', index });
+        });
+        li.querySelector('.remove-btn').addEventListener('click', (e) => {
+            e.stopPropagation();
+            handleUserAction({ type: 'REMOVE_FROM_QUEUE', index });
+        });
+        queueList.appendChild(li);
+    });
+}
+
+function updateConnectionStatus() {
+    const states = Object.values(peerConnections).map(pc => pc.connectionState);
+    let statusText = 'Disconnected';
+    let statusClass = 'disconnected';
+    const connectedCount = states.filter(s => s === 'connected').length;
+    if (isHost && states.length === 0) {
+        statusText = 'Waiting for guests...';
+        statusClass = 'connecting';
+    } else if (connectedCount > 0 || (!isHost && peerConnections['host'] && peerConnections['host'].connectionState === 'connected')) {
+        statusText = 'Connected';
+        statusClass = 'connected';
+    } else if (!isHost && states.some(s => ['connecting', 'new', 'checking'].includes(s))) {
+        statusText = 'Connecting...';
+        statusClass = 'connecting';
+    }
+    // Show just "Connected" when connected; otherwise keep the "Status: ..." prefix
+    connectionStatus.textContent = statusClass === 'connected' ? 'Connected' : `Status: ${statusText}`;
+    connectionStatus.className = `status ${statusClass}`;
+}
+
+function updateUserList(users = {}) {
+    localUserList = users;
+    userList.innerHTML = '';
+    const uniqueUsers = {};
+    Object.values(users).forEach(user => {
+        if (user.name && !uniqueUsers[user.name]) {
+            uniqueUsers[user.name] = user;
+        }
+    });
+    if (!uniqueUsers[myName]) {
+        uniqueUsers[myName] = { name: myName };
+    }
+    Object.values(uniqueUsers).forEach(user => {
+        const li = document.createElement('li');
+        let suffix = '';
+        if (user.name === myName) {
+            suffix = isHost ? ' (Host, You)' : ' (You)';
+        }
+        li.textContent = user.name + suffix;
+        userList.appendChild(li);
+    });
+}

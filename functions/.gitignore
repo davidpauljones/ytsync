@@ -1,2 +1,19 @@
+# Dependencies
 node_modules/
+
+# Environment files (CRITICAL - contains API keys)
+.env*
+*.env
 *.local
+
+# Logs
+*.log
+npm-debug.log*
+
+# IDE
+.idea/
+.vscode/
+
+# OS files
+.DS_Store
+Thumbs.db
