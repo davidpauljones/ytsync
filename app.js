@@ -1,5 +1,5 @@
 // YouTube Party Sync - Main Application
-// Version: 3.2.5
+// Version: 3.2.6
 
 // --- LAYOUT SYSTEM ---
 const layoutToggle = document.getElementById('themeToggle');
@@ -1079,8 +1079,6 @@ function configureDataChannel(peerId, channel, peerName = '') {
             const videoId = playerVideoId || currentVideoId;
             const playerState = player?.getPlayerState?.() ?? -1;
             
-            console.log('[INITIAL_SYNC] Checking sync state:', { videoId, playerVideoId, currentVideoId, playerState });
-            
             if (videoId && playerState !== YT.PlayerState.UNSTARTED) {
                 const syncData = { 
                     type: 'INITIAL_SYNC', 
@@ -1090,10 +1088,8 @@ function configureDataChannel(peerId, channel, peerName = '') {
                     duration: player?.getDuration?.() || 0, 
                     queue: videoQueue 
                 };
-                console.log('[INITIAL_SYNC] Sending sync data to guest:', syncData);
                 channel.send(JSON.stringify(syncData));
             } else {
-                console.log('[INITIAL_SYNC] No video playing, sending queue only');
                 broadcastData({ type: 'QUEUE_UPDATE', queue: videoQueue });
             }
         }
@@ -1127,17 +1123,10 @@ function configureDataChannel(peerId, channel, peerName = '') {
 
 function onPlayerStateChange(event) {
     const state = event.data;
-    console.log('[YT] onPlayerStateChange:', state, `(${YT_STATE[state] || 'UNKNOWN'})`, {
-        queueLen: videoQueue.length,
-        hidden: document.hidden,
-        currentVideoId,
-    });
 
     // Handle video ended - play next in queue or show suggestions
     if (state === YT.PlayerState.ENDED) {
-        console.log('[Queue] ENDED detected, isHost:', isHost, 'queueLen:', videoQueue.length);
         if (isHost && videoQueue.length > 0) {
-            console.log('[Queue] Video ended, playing next from queue...');
             // If random play mode, shuffle queue before picking next video
             if (randomPlayMode && videoQueue.length > 1) {
                 for (let i = videoQueue.length - 1; i > 0; i--) {
@@ -1146,7 +1135,6 @@ function onPlayerStateChange(event) {
                 }
             }
             const nextVideo = videoQueue.shift();
-            console.log('[Queue] Next video:', nextVideo);
             hideUpNextOverlay();
             // Directly load the video for host
             currentVideoId = nextVideo.videoId;
@@ -1163,7 +1151,6 @@ function onPlayerStateChange(event) {
             broadcastData({ type: 'QUEUE_UPDATE', queue: videoQueue });
             return;
         } else if (videoQueue.length === 0 && !upNextActive) {
-            console.log('[UpNext] ENDED with empty queue — showing overlay');
             showUpNextOverlay();
             setTimeout(() => populateUpNextSuggestions(), 0);
         }
@@ -1194,7 +1181,6 @@ function onPlayerStateChange(event) {
     try {
         const vid = (player && typeof player.getVideoData === 'function') ? player.getVideoData().video_id : null;
         if (vid && currentVideoId && vid !== currentVideoId) {
-            console.log('[YT] Detected in-iframe selection of new video:', vid);
             currentVideoId = vid;
             handleUserAction({ type: 'NEW_VIDEO', videoId: vid, autoPlay: true });
             return;
@@ -1213,7 +1199,6 @@ function onPlayerStateChange(event) {
 
     if ((state === YT.PlayerState.PAUSED || state === YT.PlayerState.ENDED) &&
         document.hidden && !userInitiated) {
-        console.log('[YT] Ignoring auto-pause from hidden/inactive tab.');
         return;
     }
 
@@ -1247,19 +1232,15 @@ function startBufferingWatchdog() {
         const state = player.getPlayerState();
         const timeSinceUserAction = Date.now() - lastUserActionTimestamp;
         
-        console.log('[Watchdog] Checking playback state:', YT_STATE[state] || state, 'intentToAutoPlay:', intentToAutoPlay);
-        
         // If we're stuck buffering or unstarted, and user hasn't paused recently, force play
         if ((state === YT.PlayerState.BUFFERING || state === YT.PlayerState.UNSTARTED || state === YT.PlayerState.CUED) && 
             timeSinceUserAction > 3000) {
-            console.log('[Watchdog] Video appears stuck, forcing playback...');
             player.playVideo();
             
             // Check again in 3 seconds
             bufferingWatchdogTimeout = setTimeout(() => {
                 const newState = player.getPlayerState();
                 if (newState === YT.PlayerState.BUFFERING || newState === YT.PlayerState.UNSTARTED) {
-                    console.log('[Watchdog] Still stuck after retry, attempting seekTo(0) + play...');
                     player.seekTo(0, true);
                     player.playVideo();
                 }
@@ -1295,13 +1276,10 @@ function handleReceivedData(data, senderId) {
             currentHostId = data.hostId;
             break;
         case 'INITIAL_SYNC':
-            console.log('[INITIAL_SYNC] Received sync data:', data);
             officialVideoDuration = data.duration;
             if (player.getVideoData()?.video_id !== data.videoId) {
-                console.log('[INITIAL_SYNC] Loading new video:', data.videoId, 'at time:', data.time);
                 player.loadVideoById(data.videoId, data.time);
             } else {
-                console.log('[INITIAL_SYNC] Same video, seeking to:', data.time);
                 player.seekTo(data.time, true);
             }
             // Track the synced video
@@ -1318,19 +1296,16 @@ function handleReceivedData(data, senderId) {
             officialVideoDuration = data.duration;
             break;
         case 'NEW_VIDEO':
-            console.log('[NEW_VIDEO] Received:', data, 'isHost:', isHost);
             officialVideoDuration = 0;
-            // Track the app-selected video
             currentVideoId = data.videoId;
             hideUpNextOverlay();
             const currentPlayerVideoId = player.getVideoData?.()?.video_id;
-            console.log('[NEW_VIDEO] Current player video:', currentPlayerVideoId, 'Loading:', data.videoId);
             if (currentPlayerVideoId !== data.videoId) {
                 if (data.autoPlay) {
                     intentToAutoPlay = true;
                 }
                 player.loadVideoById(data.videoId);
-                startBufferingWatchdog(); // Start watchdog in case video gets stuck
+                startBufferingWatchdog();
             } else if (data.autoPlay) {
                 player.playVideo();
                 startBufferingWatchdog();
