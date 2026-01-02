@@ -1,5 +1,5 @@
 // YouTube Party Sync - Main Application
-// Version: 3.2.1
+// Version: 3.2.2
 
 // --- LAYOUT SYSTEM ---
 const layoutToggle = document.getElementById('themeToggle');
@@ -115,6 +115,7 @@ const searchSpinner = document.getElementById('searchSpinner');
 const resultsList = document.getElementById('results');
 const queueList = document.getElementById('queueList');
 const shuffleQueueBtn = document.getElementById('shuffleQueueBtn');
+const randomPlayBtn = document.getElementById('randomPlayBtn');
 const hideQueueBtn = document.getElementById('hideQueueBtn');
 const connectionStatus = document.getElementById('connectionStatus');
 const createInviteBtn = document.getElementById('createInviteBtn');
@@ -138,6 +139,7 @@ const dataChannels = {};
 let partyDocRef;
 let videoQueue = [];
 let queueHidden = false;
+let randomPlayMode = false;
 let lastPlayerState = -1;
 let officialVideoDuration = 0;
 let hostHeartbeatInterval;
@@ -1068,6 +1070,9 @@ function configureDataChannel(peerId, channel, peerName = '') {
             // Send queue visibility state to new guest
             channel.send(JSON.stringify({ type: 'QUEUE_VISIBILITY', hidden: queueHidden }));
             
+            // Send random play mode state to new guest
+            channel.send(JSON.stringify({ type: 'RANDOM_PLAY_MODE', enabled: randomPlayMode }));
+            
             // Get the current video ID - try player first, fall back to currentVideoId
             const playerVideoId = player?.getVideoData?.()?.video_id;
             const videoId = playerVideoId || currentVideoId;
@@ -1322,6 +1327,23 @@ function handleReceivedData(data, senderId) {
             queueHidden = data.hidden;
             updateQueueVisibility();
             break;
+        case 'TOGGLE_RANDOM_PLAY':
+            if (isHost) {
+                randomPlayMode = !randomPlayMode;
+                updateRandomPlayUI();
+                // Also hide queue when enabling random play
+                if (randomPlayMode && !queueHidden) {
+                    queueHidden = true;
+                    updateQueueVisibility();
+                    broadcastData({ type: 'QUEUE_VISIBILITY', hidden: queueHidden });
+                }
+                broadcastData({ type: 'RANDOM_PLAY_MODE', enabled: randomPlayMode });
+            }
+            break;
+        case 'RANDOM_PLAY_MODE':
+            randomPlayMode = data.enabled;
+            updateRandomPlayUI();
+            break;
         case 'USER_LEAVING':
             if (isHost && peerConnections[senderId]) {
                 peerConnections[senderId].close();
@@ -1368,6 +1390,12 @@ hideQueueBtn.addEventListener('click', () => {
     handleUserAction({ type: 'TOGGLE_QUEUE_VISIBILITY' });
 });
 
+// Random play handler (host only)
+randomPlayBtn.addEventListener('click', () => {
+    if (!isHost) return;
+    handleUserAction({ type: 'TOGGLE_RANDOM_PLAY' });
+});
+
 // Update queue visibility UI
 function updateQueueVisibility() {
     if (queueHidden) {
@@ -1381,12 +1409,30 @@ function updateQueueVisibility() {
     }
 }
 
+// Update random play UI
+function updateRandomPlayUI() {
+    if (randomPlayMode) {
+        randomPlayBtn.classList.add('active');
+        randomPlayBtn.title = 'Disable Random Play Mode';
+    } else {
+        randomPlayBtn.classList.remove('active');
+        randomPlayBtn.title = 'Enable Random Play Mode';
+    }
+}
+
 function startHostHeartbeat() {
     if (hostHeartbeatInterval) clearInterval(hostHeartbeatInterval);
     hostHeartbeatInterval = setInterval(() => {
         if (isHost && player && typeof player.getCurrentTime === 'function') {
             const currentState = player.getPlayerState();
             if (currentState === YT.PlayerState.ENDED && videoQueue.length > 0) {
+                // If random play mode, shuffle queue before picking next video
+                if (randomPlayMode && videoQueue.length > 1) {
+                    for (let i = videoQueue.length - 1; i > 0; i--) {
+                        const j = Math.floor(Math.random() * (i + 1));
+                        [videoQueue[i], videoQueue[j]] = [videoQueue[j], videoQueue[i]];
+                    }
+                }
                 const nextVideo = videoQueue.shift();
                 hideUpNextOverlay();
                 broadcastData({ type: 'NEW_VIDEO', videoId: nextVideo.videoId, autoPlay: true });
