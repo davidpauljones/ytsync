@@ -531,20 +531,27 @@ function showSkipNotification(reason) {
 
 let playerReady = false;
 
-window.onYouTubeIframeAPIReady = () => player = new YT.Player('player', {
-    // Don't load a video initially - wait for user to search/select
-    playerVars: {
-        rel: 0,
-        playsinline: 1,
-        modestbranding: 1,
-        origin: window.location.origin
-    },
-    events: {
-        'onReady': () => { playerReady = true; },
-        'onStateChange': onPlayerStateChange,
-        'onError': onPlayerError
-    }
-});
+window.onYouTubeIframeAPIReady = () => {
+    console.log('[YT API] onYouTubeIframeAPIReady called');
+    player = new YT.Player('player', {
+        // Don't load a video initially - wait for user to search/select
+        playerVars: {
+            rel: 0,
+            playsinline: 1,
+            modestbranding: 1,
+            origin: window.location.origin
+        },
+        events: {
+            'onReady': () => { 
+                console.log('[YT API] Player onReady fired');
+                playerReady = true; 
+            },
+            'onStateChange': onPlayerStateChange,
+            'onError': onPlayerError
+        }
+    });
+    console.log('[YT API] Player created:', player);
+};
 
 searchButton.addEventListener('click', searchYouTube);
 searchInput.addEventListener('keypress', e => e.key === 'Enter' && searchYouTube());
