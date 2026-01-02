@@ -1,5 +1,5 @@
 // YouTube Party Sync - Main Application
-// Version: 3.1.1
+// Version: 3.1.2
 
 // --- LAYOUT SYSTEM ---
 const layoutToggle = document.getElementById('themeToggle');
@@ -114,6 +114,7 @@ const searchInput = document.getElementById('searchInput');
 const searchSpinner = document.getElementById('searchSpinner');
 const resultsList = document.getElementById('results');
 const queueList = document.getElementById('queueList');
+const shuffleQueueBtn = document.getElementById('shuffleQueueBtn');
 const connectionStatus = document.getElementById('connectionStatus');
 const createInviteBtn = document.getElementById('createInviteBtn');
 const inviteLinkInput = document.getElementById('inviteLink');
@@ -1184,6 +1185,16 @@ function handleReceivedData(data, senderId) {
                 broadcastData({ type: 'QUEUE_UPDATE', queue: videoQueue });
             }
             break;
+        case 'SHUFFLE_QUEUE':
+            if (isHost && videoQueue.length > 1) {
+                // Fisher-Yates shuffle
+                for (let i = videoQueue.length - 1; i > 0; i--) {
+                    const j = Math.floor(Math.random() * (i + 1));
+                    [videoQueue[i], videoQueue[j]] = [videoQueue[j], videoQueue[i]];
+                }
+                broadcastData({ type: 'QUEUE_UPDATE', queue: videoQueue });
+            }
+            break;
         case 'USER_LEAVING':
             if (isHost && peerConnections[senderId]) {
                 peerConnections[senderId].close();
@@ -1216,6 +1227,12 @@ copyInviteBtn.addEventListener('click', async () => {
         setTimeout(() => (copyInviteBtn.textContent = 'Copy'), 1500);
         if (window.getSelection) window.getSelection().removeAllRanges();
     }
+});
+
+// Shuffle queue handler
+shuffleQueueBtn.addEventListener('click', () => {
+    if (videoQueue.length < 2) return;
+    handleUserAction({ type: 'SHUFFLE_QUEUE' });
 });
 
 function startHostHeartbeat() {
