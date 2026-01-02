@@ -1,73 +1,69 @@
 // YouTube Party Sync - Main Application
-// Version: 2.1.0
+// Version: 3.0.0
 
-// --- THEME SYSTEM ---
-const themeToggle = document.getElementById('themeToggle');
-const themeDropdown = document.getElementById('themeDropdown');
-const themeOptions = document.querySelectorAll('.theme-option');
+// --- LAYOUT SYSTEM ---
+const layoutToggle = document.getElementById('themeToggle');
+const layoutDropdown = document.getElementById('themeDropdown');
+const layoutOptions = document.querySelectorAll('.theme-option');
 
-// Available themes
-const THEMES = {
-    'classic-light': 'Classic Light',
-    'classic-dark': 'Classic Dark',
-    'modern-dark': 'Modern Dark',
-    'glass': 'Glassmorphism',
-    'midnight': 'Midnight Purple',
-    'ocean': 'Ocean Blue',
-    'sunset': 'Sunset'
+// Available layouts
+const LAYOUTS = {
+    'classic': 'Classic - Video with sidebar',
+    'cinema': 'Cinema - Immersive video focus',
+    'streamline': 'Streamline - Modern grid panels'
 };
 
-// Load saved theme or default to classic-dark
-function loadTheme() {
-    const savedTheme = localStorage.getItem('theme') || 'classic-dark';
-    applyTheme(savedTheme);
+// Load saved layout or default to classic
+function loadLayout() {
+    const savedLayout = localStorage.getItem('layout') || 'classic';
+    applyLayout(savedLayout);
 }
 
-// Apply theme to document
-function applyTheme(themeName) {
-    // Set data-theme attribute on html element
-    document.documentElement.setAttribute('data-theme', themeName);
+// Apply layout to document
+function applyLayout(layoutName) {
+    // Set data-layout attribute on html element
+    document.documentElement.setAttribute('data-layout', layoutName);
     
     // Update active state in dropdown
-    themeOptions.forEach(option => {
-        option.classList.toggle('active', option.dataset.theme === themeName);
+    layoutOptions.forEach(option => {
+        option.classList.toggle('active', option.dataset.layout === layoutName);
     });
     
     // Save to localStorage
-    localStorage.setItem('theme', themeName);
+    localStorage.setItem('layout', layoutName);
 }
 
 // Toggle dropdown visibility
-themeToggle.addEventListener('click', (e) => {
+layoutToggle.addEventListener('click', (e) => {
     e.stopPropagation();
-    themeDropdown.classList.toggle('active');
+    layoutDropdown.classList.toggle('active');
 });
 
-// Handle theme selection
-themeOptions.forEach(option => {
+// Handle layout selection
+layoutOptions.forEach(option => {
     option.addEventListener('click', () => {
-        const themeName = option.dataset.theme;
-        applyTheme(themeName);
-        themeDropdown.classList.remove('active');
+        const layoutName = option.dataset.layout;
+        applyLayout(layoutName);
+        layoutDropdown.classList.remove('active');
     });
 });
 
 // Close dropdown when clicking outside
 document.addEventListener('click', (e) => {
     if (!e.target.closest('.theme-selector')) {
-        themeDropdown.classList.remove('active');
+        layoutDropdown.classList.remove('active');
     }
 });
 
 // Close dropdown on Escape key
 document.addEventListener('keydown', (e) => {
     if (e.key === 'Escape') {
-        themeDropdown.classList.remove('active');
+        layoutDropdown.classList.remove('active');
     }
 });
 
-// Initialize theme on load
-loadTheme();
+// Initialize layout on load
+loadLayout();
 
 // --- CONFIGURATION ---
 // Firebase config - API key is safe to expose publicly

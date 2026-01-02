@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>YouTube Sync with Firebase</title>
     <link rel="icon" type="image/svg+xml" href="favicon.svg">
-    <link rel="stylesheet" href="styles.css?v=2.1.0">
+    <link rel="stylesheet" href="styles.css?v=3.0.0">
 </head>
 <body>
 
@@ -33,40 +33,40 @@
             <div id="searchSpinner" class="spinner hidden" aria-hidden="true"></div>
         </div>
         <div class="user-actions">
-            <!-- Theme Selector -->
+            <!-- Layout Selector -->
             <div class="theme-selector">
-                <button class="theme-btn" id="themeToggle" aria-label="Change theme" title="Change theme">
-                    <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path></svg>
-                    <span>Theme</span>
+                <button class="theme-btn" id="themeToggle" aria-label="Change layout" title="Change layout">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect><line x1="3" y1="9" x2="21" y2="9"></line><line x1="9" y1="21" x2="9" y2="9"></line></svg>
+                    <span>Layout</span>
                 </button>
                 <div class="theme-dropdown" id="themeDropdown">
-                    <button class="theme-option" data-theme="classic-light">
-                        <span class="theme-preview classic-light"></span>
-                        Classic Light
+                    <div class="theme-dropdown-header">Choose Layout</div>
+                    <button class="theme-option" data-layout="classic">
+                        <span class="theme-preview-icon">
+                            <svg viewBox="0 0 24 16"><rect x="1" y="1" width="14" height="14" rx="1" fill="currentColor" opacity="0.6"/><rect x="17" y="1" width="6" height="14" rx="1" fill="currentColor" opacity="0.3"/></svg>
+                        </span>
+                        <span class="theme-option-info">
+                            <span class="theme-option-name">Classic</span>
+                            <span class="theme-option-desc">Video with sidebar on right</span>
+                        </span>
                     </button>
-                    <button class="theme-option" data-theme="classic-dark">
-                        <span class="theme-preview classic-dark"></span>
-                        Classic Dark
+                    <button class="theme-option" data-layout="cinema">
+                        <span class="theme-preview-icon">
+                            <svg viewBox="0 0 24 16"><rect x="1" y="2" width="22" height="12" rx="1" fill="currentColor" opacity="0.6"/></svg>
+                        </span>
+                        <span class="theme-option-info">
+                            <span class="theme-option-name">Cinema</span>
+                            <span class="theme-option-desc">Immersive video-focused view</span>
+                        </span>
                     </button>
-                    <button class="theme-option" data-theme="modern-dark">
-                        <span class="theme-preview modern-dark"></span>
-                        Modern Dark
-                    </button>
-                    <button class="theme-option" data-theme="glass">
-                        <span class="theme-preview glass"></span>
-                        Glassmorphism
-                    </button>
-                    <button class="theme-option" data-theme="midnight">
-                        <span class="theme-preview midnight"></span>
-                        Midnight Purple
-                    </button>
-                    <button class="theme-option" data-theme="ocean">
-                        <span class="theme-preview ocean"></span>
-                        Ocean Blue
-                    </button>
-                    <button class="theme-option" data-theme="sunset">
-                        <span class="theme-preview sunset"></span>
-                        Sunset
+                    <button class="theme-option" data-layout="streamline">
+                        <span class="theme-preview-icon">
+                            <svg viewBox="0 0 24 16"><rect x="1" y="1" width="11" height="10" rx="1" fill="currentColor" opacity="0.6"/><rect x="13" y="1" width="10" height="4.5" rx="1" fill="currentColor" opacity="0.3"/><rect x="13" y="6.5" width="10" height="4.5" rx="1" fill="currentColor" opacity="0.3"/><rect x="1" y="12" width="22" height="3" rx="1" fill="currentColor" opacity="0.3"/></svg>
+                        </span>
+                        <span class="theme-option-info">
+                            <span class="theme-option-name">Streamline</span>
+                            <span class="theme-option-desc">Modern grid with panels</span>
+                        </span>
                     </button>
                 </div>
             </div>
@@ -151,7 +151,7 @@
 <script src="https://www.gstatic.com/firebasejs/9.6.7/firebase-functions-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/9.6.7/firebase-auth-compat.js"></script>
 <script src="https://www.youtube.com/iframe_api"></script>
-<script src="app.js?v=2.1.0"></script>
+<script src="app.js?v=3.0.0"></script>
 
 <!-- Reconnection overlay -->
 <div id="reconnectOverlay" class="reconnect-overlay hidden" aria-hidden="true">
