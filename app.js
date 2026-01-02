@@ -1,5 +1,5 @@
 // YouTube Party Sync - Main Application
-// Version: 3.1.0
+// Version: 3.1.1
 
 // --- LAYOUT SYSTEM ---
 const layoutToggle = document.getElementById('themeToggle');
@@ -950,10 +950,27 @@ function configureDataChannel(peerId, channel, peerName = '') {
             });
             broadcastData({ type: 'USER_LIST', users });
             channel.send(JSON.stringify({ type: 'HOST_INFO', hostId: myAuthId }));
-            if (player && player.getPlayerState && player.getPlayerState() !== YT.PlayerState.UNSTARTED && player.getVideoData().video_id) {
-                const syncData = { type: 'INITIAL_SYNC', videoId: player.getVideoData().video_id, time: player.getCurrentTime(), state: player.getPlayerState(), duration: player.getDuration(), queue: videoQueue };
+            
+            // Get the current video ID - try player first, fall back to currentVideoId
+            const playerVideoId = player?.getVideoData?.()?.video_id;
+            const videoId = playerVideoId || currentVideoId;
+            const playerState = player?.getPlayerState?.() ?? -1;
+            
+            console.log('[INITIAL_SYNC] Checking sync state:', { videoId, playerVideoId, currentVideoId, playerState });
+            
+            if (videoId && playerState !== YT.PlayerState.UNSTARTED) {
+                const syncData = { 
+                    type: 'INITIAL_SYNC', 
+                    videoId: videoId, 
+                    time: player?.getCurrentTime?.() || 0, 
+                    state: playerState, 
+                    duration: player?.getDuration?.() || 0, 
+                    queue: videoQueue 
+                };
+                console.log('[INITIAL_SYNC] Sending sync data to guest:', syncData);
                 channel.send(JSON.stringify(syncData));
             } else {
+                console.log('[INITIAL_SYNC] No video playing, sending queue only');
                 broadcastData({ type: 'QUEUE_UPDATE', queue: videoQueue });
             }
         }
@@ -1078,10 +1095,13 @@ function handleReceivedData(data, senderId) {
             currentHostId = data.hostId;
             break;
         case 'INITIAL_SYNC':
+            console.log('[INITIAL_SYNC] Received sync data:', data);
             officialVideoDuration = data.duration;
             if (player.getVideoData()?.video_id !== data.videoId) {
+                console.log('[INITIAL_SYNC] Loading new video:', data.videoId, 'at time:', data.time);
                 player.loadVideoById(data.videoId, data.time);
             } else {
+                console.log('[INITIAL_SYNC] Same video, seeking to:', data.time);
                 player.seekTo(data.time, true);
             }
             // Track the synced video
