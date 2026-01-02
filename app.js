@@ -1,5 +1,5 @@
 // YouTube Party Sync - Main Application
-// Version: 3.2.4
+// Version: 3.2.5
 
 // --- LAYOUT SYSTEM ---
 const layoutToggle = document.getElementById('themeToggle');
@@ -143,6 +143,7 @@ let randomPlayMode = false;
 let lastPlayerState = -1;
 let officialVideoDuration = 0;
 let hostHeartbeatInterval;
+let bufferingWatchdogTimeout = null;
 let lastUserActionTimestamp = 0;
 let intentToAutoPlay = false;
 let localUserList = {};
@@ -1151,6 +1152,7 @@ function onPlayerStateChange(event) {
             currentVideoId = nextVideo.videoId;
             intentToAutoPlay = true;
             player.loadVideoById(nextVideo.videoId);
+            startBufferingWatchdog(); // Start watchdog in case video gets stuck
             // Broadcast to guests
             Object.entries(dataChannels).forEach(([id, channel]) => {
                 if (id !== 'host' && channel && channel.readyState === 'open') {
@@ -1171,13 +1173,20 @@ function onPlayerStateChange(event) {
     if (state === YT.PlayerState.PLAYING) {
         updateVideoTitle();
         hideUpNextOverlay();
+        stopBufferingWatchdog(); // Video is playing, stop the watchdog
     } else if (state === YT.PlayerState.CUED) {
         updateVideoTitle();
+    }
+
+    // Start watchdog when buffering (in case it gets stuck)
+    if (state === YT.PlayerState.BUFFERING) {
+        startBufferingWatchdog();
     }
 
     if (isHost && intentToAutoPlay && state === YT.PlayerState.CUED) {
         intentToAutoPlay = false;
         handleUserAction({ type: 'STATE_CHANGE', state: YT.PlayerState.PLAYING, time: 0, userInitiated: true });
+        startBufferingWatchdog(); // Start watchdog in case autoplay fails
         return;
     }
 
@@ -1222,6 +1231,49 @@ function onPlayerStateChange(event) {
 
     const actionData = { type: 'STATE_CHANGE', state, time: player.getCurrentTime(), userInitiated };
     handleUserAction(actionData);
+}
+
+// Buffering watchdog - detects stuck buffering and forces playback
+function startBufferingWatchdog() {
+    // Clear any existing watchdog
+    if (bufferingWatchdogTimeout) {
+        clearTimeout(bufferingWatchdogTimeout);
+    }
+    
+    // Check after 5 seconds if we're still buffering
+    bufferingWatchdogTimeout = setTimeout(() => {
+        if (!player || typeof player.getPlayerState !== 'function') return;
+        
+        const state = player.getPlayerState();
+        const timeSinceUserAction = Date.now() - lastUserActionTimestamp;
+        
+        console.log('[Watchdog] Checking playback state:', YT_STATE[state] || state, 'intentToAutoPlay:', intentToAutoPlay);
+        
+        // If we're stuck buffering or unstarted, and user hasn't paused recently, force play
+        if ((state === YT.PlayerState.BUFFERING || state === YT.PlayerState.UNSTARTED || state === YT.PlayerState.CUED) && 
+            timeSinceUserAction > 3000) {
+            console.log('[Watchdog] Video appears stuck, forcing playback...');
+            player.playVideo();
+            
+            // Check again in 3 seconds
+            bufferingWatchdogTimeout = setTimeout(() => {
+                const newState = player.getPlayerState();
+                if (newState === YT.PlayerState.BUFFERING || newState === YT.PlayerState.UNSTARTED) {
+                    console.log('[Watchdog] Still stuck after retry, attempting seekTo(0) + play...');
+                    player.seekTo(0, true);
+                    player.playVideo();
+                }
+            }, 3000);
+        }
+    }, 5000);
+}
+
+// Stop the watchdog when video is playing normally
+function stopBufferingWatchdog() {
+    if (bufferingWatchdogTimeout) {
+        clearTimeout(bufferingWatchdogTimeout);
+        bufferingWatchdogTimeout = null;
+    }
 }
 
 function handleReceivedData(data, senderId) {
@@ -1278,8 +1330,10 @@ function handleReceivedData(data, senderId) {
                     intentToAutoPlay = true;
                 }
                 player.loadVideoById(data.videoId);
+                startBufferingWatchdog(); // Start watchdog in case video gets stuck
             } else if (data.autoPlay) {
                 player.playVideo();
+                startBufferingWatchdog();
             }
             break;
         case 'STATE_CHANGE': {
