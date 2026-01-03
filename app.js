@@ -1,5 +1,5 @@
 // YouTube Party Sync - Main Application
-// Version: 3.3.7
+// Version: 3.3.8
 
 // --- API QUOTA OPTIMIZATION ---
 // Cache last search results for Up Next (no API call needed!)
@@ -561,27 +561,67 @@ function showSkipNotification(reason) {
 }
 
 let playerReady = false;
+let playerInitAttempted = false;
 
-window.onYouTubeIframeAPIReady = () => {
-    console.log('[YT] YouTube IFrame API ready, creating player...');
-    player = new YT.Player('player', {
-        // Don't load a video initially - wait for user to search/select
-        playerVars: {
-            rel: 0,
-            playsinline: 1,
-            modestbranding: 1,
-            origin: window.location.origin
-        },
-        events: {
-            'onReady': () => { 
-                playerReady = true; 
-                console.log('[YT] Player ready!');
+function initializeYouTubePlayer() {
+    if (playerInitAttempted) return;
+    playerInitAttempted = true;
+    
+    console.log('[YT] Initializing YouTube player...');
+    
+    // Check if the player div exists
+    const playerDiv = document.getElementById('player');
+    if (!playerDiv) {
+        console.error('[YT] Player div not found!');
+        return;
+    }
+    
+    try {
+        player = new YT.Player('player', {
+            // Don't load a video initially - wait for user to search/select
+            playerVars: {
+                rel: 0,
+                playsinline: 1,
+                modestbranding: 1,
+                origin: window.location.origin
             },
-            'onStateChange': onPlayerStateChange,
-            'onError': onPlayerError
-        }
-    });
+            events: {
+                'onReady': () => { 
+                    playerReady = true; 
+                    console.log('[YT] Player ready!');
+                },
+                'onStateChange': onPlayerStateChange,
+                'onError': onPlayerError
+            }
+        });
+    } catch (e) {
+        console.error('[YT] Failed to create player:', e);
+    }
+}
+
+// YouTube API callback - may be called before or after app.js loads
+window.onYouTubeIframeAPIReady = () => {
+    console.log('[YT] YouTube IFrame API ready callback fired');
+    initializeYouTubePlayer();
 };
+
+// Fallback: Check if API already loaded (race condition where API loaded before app.js)
+if (typeof YT !== 'undefined' && YT.Player) {
+    console.log('[YT] YouTube API already available, initializing...');
+    initializeYouTubePlayer();
+}
+
+// Safety net: If player not ready after 5 seconds, try again or show error
+setTimeout(() => {
+    if (!playerReady && !playerInitAttempted && typeof YT !== 'undefined' && YT.Player) {
+        console.log('[YT] Late initialization attempt...');
+        initializeYouTubePlayer();
+    } else if (!playerReady && playerInitAttempted) {
+        console.warn('[YT] Player created but onReady not fired after 5s');
+    } else if (!playerReady) {
+        console.error('[YT] YouTube API failed to load after 5 seconds');
+    }
+}, 5000);
 
 searchButton.addEventListener('click', searchYouTube);
 searchInput.addEventListener('keypress', e => e.key === 'Enter' && searchYouTube());
@@ -1347,12 +1387,16 @@ function handleReceivedData(data, senderId, retryCount = 0) {
     if (data.type.includes('VIDEO') || data.type === 'NEW_VIDEO' || data.type === 'INITIAL_SYNC' || data.type === 'STATE_CHANGE' || data.type === 'TIME_UPDATE') {
         if (!playerReady || !player || typeof player.loadVideoById !== 'function') {
             if (retryCount < 20) {
-                if (retryCount === 0 || retryCount === 5 || retryCount === 10 || retryCount === 15) {
-                    console.log(`[YT] Waiting for player... retry ${retryCount}/20, playerReady=${playerReady}, player=${!!player}, loadVideoById=${player ? typeof player.loadVideoById : 'N/A'}`);
+                if (retryCount === 0) {
+                    console.log(`[YT] Waiting for player to initialize...`);
+                } else if (retryCount === 10) {
+                    console.log(`[YT] Still waiting for player... (5s)`);
+                    showNotification('⏳ Video player loading...', 'info');
                 }
                 setTimeout(() => handleReceivedData(data, senderId, retryCount + 1), 500);
             } else {
-                console.error(`[${data.type}] Player failed to initialize after 10 seconds - playerReady=${playerReady}, player=${!!player}, loadVideoById=${player ? typeof player.loadVideoById : 'N/A'}`);
+                console.error(`[${data.type}] Player failed to initialize after 10 seconds - playerReady=${playerReady}, player=${!!player}`);
+                showNotification('❌ Video player failed to load. Please refresh the page.', 'error');
             }
             return;
         }
