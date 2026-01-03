@@ -1,5 +1,5 @@
 // YouTube Party Sync - Main Application
-// Version: 3.3.6
+// Version: 3.3.7
 
 // --- API QUOTA OPTIMIZATION ---
 // Cache last search results for Up Next (no API call needed!)
@@ -154,6 +154,10 @@ let lastUserActionTimestamp = 0;
 let intentToAutoPlay = false;
 let localUserList = {};
 
+// ICE candidate batching to reduce Firestore writes
+const iceCandidateBatches = {};
+const ICE_BATCH_DELAY = 100; // ms to wait before flushing candidates
+
 // Track real user gestures to distinguish auto-pauses on hidden tabs
 let lastUserGestureAt = 0;
 ['pointerdown', 'keydown', 'touchstart', 'click'].forEach(evt =>
@@ -184,6 +188,40 @@ const YT_STATE = {
     [3]: 'BUFFERING',
     [5]: 'CUED',
 };
+
+// Batch ICE candidates to reduce Firestore writes
+function batchIceCandidate(collectionRef, candidate, batchKey) {
+    if (!iceCandidateBatches[batchKey]) {
+        iceCandidateBatches[batchKey] = { candidates: [], timeout: null, ref: collectionRef };
+    }
+    iceCandidateBatches[batchKey].candidates.push(candidate.toJSON());
+    
+    // Clear existing timeout and set a new one
+    if (iceCandidateBatches[batchKey].timeout) {
+        clearTimeout(iceCandidateBatches[batchKey].timeout);
+    }
+    
+    iceCandidateBatches[batchKey].timeout = setTimeout(async () => {
+        const batch = iceCandidateBatches[batchKey];
+        const candidates = batch.candidates;
+        iceCandidateBatches[batchKey] = null;
+        
+        if (candidates.length === 0) return;
+        
+        try {
+            // Use Firestore batch write for multiple candidates
+            const firestoreBatch = db.batch();
+            candidates.forEach(cand => {
+                const docRef = batch.ref.doc();
+                firestoreBatch.set(docRef, cand);
+            });
+            await firestoreBatch.commit();
+            console.log(`[ICE] Batched ${candidates.length} candidates to Firestore`);
+        } catch (e) {
+            console.error('[ICE] Failed to batch write candidates:', e);
+        }
+    }, ICE_BATCH_DELAY);
+}
 
 // Up Next overlay elements
 const upNextOverlay = document.getElementById('upNextOverlay');
@@ -784,14 +822,9 @@ async function joinParty() {
 
     const guestCandidatesRef = pc._guestGuestCandidatesRef;
 
-    pc.onicecandidate = async (event) => {
+    pc.onicecandidate = (event) => {
         if (event.candidate) {
-            try {
-                await guestCandidatesRef.add(event.candidate.toJSON());
-                console.log('[JOIN] Sent guest ICE candidate');
-            } catch (e) {
-                console.error('[JOIN] Failed to write guest ICE candidate:', e);
-            }
+            batchIceCandidate(guestCandidatesRef, event.candidate, 'guest-candidates');
         } else {
             console.log('[JOIN] ICE gathering complete');
         }
@@ -873,13 +906,9 @@ function listenForGuests() {
                         configureDataChannel(guestId, event.channel, name);
                     };
 
-                    pc.onicecandidate = async (event) => {
+                    pc.onicecandidate = (event) => {
                         if (event.candidate) {
-                            try {
-                                await guestDocRef.collection('hostCandidates').add(event.candidate.toJSON());
-                            } catch (e) {
-                                console.error('[HOST] Failed to write host ICE candidate:', e);
-                            }
+                            batchIceCandidate(guestDocRef.collection('hostCandidates'), event.candidate, `host-candidates-${guestId}`);
                         }
                     };
 
