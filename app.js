@@ -96,7 +96,7 @@ loadLayout();
 // Firebase config - API key is safe to expose publicly
 // Security is enforced by Firestore rules and Firebase Authentication
 const firebaseConfig = {
-    apiKey: "AIzaSyActKLRV4ldSsS1dKNwkXXdKblnwG0s654",
+    apiKey: "AIzaSyBvHqOHcW--e76fVp7exthrsapUYYcwS3Q",
     authDomain: "partysync-17cd5.firebaseapp.com",
     projectId: "partysync-17cd5",
     storageBucket: "partysync-17cd5.appspot.com",
