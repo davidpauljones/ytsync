@@ -10,8 +10,8 @@ firebase-debug.*.log*
 # Firebase cache
 .firebase/
 
-# Firebase config (keep template, exclude actual config)
-config.js
+# Firebase config template
+# Note: config.js is committed because the API key has HTTP referrer restrictions
 !config.template.js
 
 # Uncomment this if you'd like others to create their own Firebase project.
