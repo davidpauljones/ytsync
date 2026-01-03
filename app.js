@@ -1,5 +1,5 @@
 // YouTube Party Sync - Main Application
-// Version: 3.3.5
+// Version: 3.3.6
 
 // --- API QUOTA OPTIMIZATION ---
 // Cache last search results for Up Next (no API call needed!)
