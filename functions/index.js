@@ -1,7 +1,47 @@
-// functions/index.js - v5
+// functions/index.js - v6
 const functions = require("firebase-functions/v2");
 const { onCall } = require("firebase-functions/v2/https");
 const axios = require("axios");
+
+// Get TURN credentials from Cloudflare Calls
+exports.getTurnCredentials = onCall(async (request) => {
+  const appId = process.env.CLOUDFLARE_TURN_APP_ID;
+  const appSecret = process.env.CLOUDFLARE_TURN_APP_SECRET;
+
+  if (!appId || !appSecret) {
+    console.error("Cloudflare TURN credentials not configured");
+    throw new functions.https.HttpsError(
+      "failed-precondition",
+      "TURN server not configured",
+    );
+  }
+
+  try {
+    // Generate short-lived credentials (valid for 24 hours)
+    const response = await axios.post(
+      `https://rtc.live.cloudflare.com/v1/turn/keys/${appId}/credentials/generate`,
+      { ttl: 86400 }, // 24 hours in seconds
+      {
+        headers: {
+          "Authorization": `Bearer ${appSecret}`,
+          "Content-Type": "application/json",
+        },
+      },
+    );
+
+    const { iceServers } = response.data;
+    console.log("Generated TURN credentials successfully");
+    return { iceServers };
+  } catch (error) {
+    console.error("Error generating TURN credentials:", error.message);
+    // Return fallback public STUN servers if Cloudflare fails
+    return {
+      iceServers: [
+        { urls: ["stun:stun.l.google.com:19302", "stun:stun1.l.google.com:19302"] },
+      ],
+    };
+  }
+});
 
 exports.searchYoutube = onCall(async (request) => {
   // Read the API key from environment variables

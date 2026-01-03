@@ -1,5 +1,5 @@
 // YouTube Party Sync - Main Application
-// Version: 3.3.8
+// Version: 3.3.9
 
 // --- API QUOTA OPTIMIZATION ---
 // Cache last search results for Up Next (no API call needed!)
@@ -167,17 +167,36 @@ let lastUserGestureAt = 0;
 // Track the currently loaded videoId
 let currentVideoId = null;
 
-// WebRTC configuration with STUN and free TURN servers for better connectivity
-const rtcConfig = {
+// Default WebRTC configuration (will be updated with Cloudflare TURN if available)
+let rtcConfig = {
     iceServers: [
         { urls: ['stun:stun.l.google.com:19302', 'stun:stun1.l.google.com:19302', 'stun:stun2.l.google.com:19302'] },
-        // Free TURN servers from Open Relay Project (https://www.metered.ca/tools/openrelay/)
+        // Fallback free TURN servers from Open Relay Project
         { urls: 'turn:openrelay.metered.ca:80', username: 'openrelayproject', credential: 'openrelayproject' },
         { urls: 'turn:openrelay.metered.ca:443', username: 'openrelayproject', credential: 'openrelayproject' },
         { urls: 'turn:openrelay.metered.ca:443?transport=tcp', username: 'openrelayproject', credential: 'openrelayproject' },
     ],
     iceCandidatePoolSize: 2,
 };
+
+// Fetch Cloudflare TURN credentials on startup
+async function initializeTurnServers() {
+    try {
+        const getTurnCredentials = firebase.functions().httpsCallable('getTurnCredentials');
+        const result = await getTurnCredentials();
+        if (result.data && result.data.iceServers && result.data.iceServers.length > 0) {
+            rtcConfig.iceServers = result.data.iceServers;
+            console.log('[TURN] Using Cloudflare TURN servers');
+        } else {
+            console.log('[TURN] Using fallback TURN servers');
+        }
+    } catch (e) {
+        console.warn('[TURN] Failed to get Cloudflare credentials, using fallback:', e.message);
+    }
+}
+
+// Initialize TURN servers in background (don't block app startup)
+initializeTurnServers();
 
 // Helpful mapping for logging YT state numbers
 const YT_STATE = {
